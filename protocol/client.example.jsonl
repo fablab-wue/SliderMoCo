@@ -1,0 +1,13 @@
+# Client → server (WebSocket text JSON)
+
+{"wdt":"alive"}
+{"mc":"SS 40"}
+{"mc":"MT 120 30"}
+{"task":"TSK_TL_STEP 100 0 5 1 0.33 0.1"}
+{"path":{"cmd":"begin","slice_us":10000}}
+{"path":{"cmd":"data","samples":[[500,0],[500,20]]}}
+{"path":{"cmd":"go"}}
+{"path":{"cmd":"begin","slice_us":33333}}
+{"path":{"cmd":"data","samples":[[500,0],[500,20]]}}
+{"task":"TSK_TL_PATH_CONT 10 0.333333 0.1"}
+{"task":"TSK_TL_PATH_MSM 0.333333 0.1"}

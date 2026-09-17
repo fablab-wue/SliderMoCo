@@ -1,0 +1,40 @@
+{
+  "t": "status",
+  "state": "M",
+  "axes": [
+    {
+      "id": 1,
+      "name": "slide",
+      "unit": "mm",
+      "pos": 12.3,
+      "spd": 8.0,
+      "acc": 40.0,
+      "tgt": 100.0,
+      "ss": 40.0,
+      "sa": 150.0,
+      "state": "M",
+      "min": 0,
+      "max": 600,
+      "mc_id": 1,
+      "slot": 1
+    },
+    {
+      "id": 2,
+      "name": "pan",
+      "unit": "deg",
+      "pos": 45.0,
+      "spd": 0.0,
+      "acc": 0.0,
+      "tgt": null,
+      "state": "I",
+      "mc_id": 1,
+      "slot": 2
+    }
+  ],
+  "session": { "enabled": true },
+  "task": null,
+  "linked": true,
+  "sim": false,
+  "line1": "Moving...",
+  "line2": ""
+}

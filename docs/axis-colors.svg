@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 280" width="720" height="280">
+  <rect width="720" height="280" fill="#0b0d10"/>
+  <text x="24" y="36" fill="#e8eef4" font-family="Segoe UI, sans-serif" font-size="16">Axis pastels by id</text>
+  <g font-family="Consolas, monospace" font-size="13" fill="#0b0d10" text-anchor="middle">
+    <rect x="24" y="56" width="108" height="160" fill="#bd9eda"/>
+    <text x="78" y="130">1</text>
+    <text x="78" y="150">violet</text>
+    <text x="78" y="248" fill="#bd9eda">#bd9eda</text>
+
+    <rect x="140" y="56" width="108" height="160" fill="#9edabd"/>
+    <text x="194" y="130">2</text>
+    <text x="194" y="150">mint</text>
+    <text x="194" y="248" fill="#9edabd">#9edabd</text>
+
+    <rect x="256" y="56" width="108" height="160" fill="#dabd9f"/>
+    <text x="310" y="130">3</text>
+    <text x="310" y="150">apricot</text>
+    <text x="310" y="248" fill="#dabd9f">#dabd9f</text>
+
+    <rect x="372" y="56" width="108" height="160" fill="#9ebdda"/>
+    <text x="426" y="130">4</text>
+    <text x="426" y="150">sky</text>
+    <text x="426" y="248" fill="#9ebdda">#9ebdda</text>
+
+    <rect x="488" y="56" width="108" height="160" fill="#bdda9f"/>
+    <text x="542" y="130">5</text>
+    <text x="542" y="150">spring</text>
+    <text x="542" y="248" fill="#bdda9f">#bdda9f</text>
+
+    <rect x="604" y="56" width="108" height="160" fill="#da9ebd"/>
+    <text x="658" y="130">6</text>
+    <text x="658" y="150">rose</text>
+    <text x="658" y="248" fill="#da9ebd">#da9ebd</text>
+  </g>
+</svg>

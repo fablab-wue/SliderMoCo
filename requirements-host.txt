@@ -1,0 +1,2 @@
+# Optional for python -m server.host --port COMx
+pyserial>=3.5

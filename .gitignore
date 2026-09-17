@@ -1,0 +1,26 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.vscode/
+.idea/
+*.mpy
+.DS_Store
+Thumbs.db
+
+# Local overlays on the PC copy of board/ and on the device root
+SliderPins.py
+board/SliderPins.py
+wifi.json
+board/wifi.json
+
+# Host data / pack output
+data/rigs/*.json
+data/projects/*.json
+dist/
+
+# Download scratch
+_microdot.py
+_websocket.py
+_helpers.py
+_microdot.py.tmp

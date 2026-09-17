@@ -1,0 +1,36 @@
+{
+  "t": "hello",
+  "linked": true,
+  "sim": true,
+  "config": {
+    "name": "SliderMoCo mock",
+    "axes": [
+      {
+        "id": 1,
+        "name": "slide",
+        "unit": "mm",
+        "mc_id": 1,
+        "slot": 1,
+        "min": 0,
+        "max": 600,
+        "soft_min": 0,
+        "soft_max": 600,
+        "max_spd": 100,
+        "max_acc": 500
+      },
+      {
+        "id": 2,
+        "name": "pan",
+        "unit": "deg",
+        "mc_id": 1,
+        "slot": 2,
+        "min": 0,
+        "max": 360,
+        "max_spd": 80,
+        "max_acc": 400
+      }
+    ]
+  },
+  "session": { "enabled": true, "ss": 40.0, "sa": 100.0 },
+  "task": null
+}
