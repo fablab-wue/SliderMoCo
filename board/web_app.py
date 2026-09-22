@@ -155,6 +155,25 @@ class WebApp:
         d["wifi"] = self.wifi.public_status()
         return d
 
+    def _hello_payload(self):
+        d = self.panel.hello_dict()
+        d["wifi"] = self.wifi.public_status()
+        return d
+
+    async def push_hello(self):
+        payload = json.dumps(self._hello_payload())
+        dead = []
+        for ws in list(self.clients):
+            try:
+                await ws.send(payload)
+            except Exception:
+                dead.append(ws)
+        for ws in dead:
+            try:
+                self.clients.remove(ws)
+            except ValueError:
+                pass
+
     def _install_routes(self):
         app = self.app
         web = self
@@ -188,8 +207,44 @@ class WebApp:
                 await web.panel.refresh_hello()
             except Exception as exc:
                 dbg(2, "api hello refresh", exc)
+            try:
+                await web.push_hello()
+            except Exception as exc:
+                dbg(2, "api hello push", exc)
             return Response(
-                body=json.dumps(web.panel.hello_dict()),
+                body=json.dumps(web._hello_payload()),
+                headers={"Content-Type": "application/json"},
+            )
+
+        @app.route("/api/serial", methods=["GET", "POST"])
+        async def api_serial(req):
+            broker = getattr(web.panel, "serial", None)
+            if broker is None:
+                return Response("not found", status_code=404)
+            if req.method == "POST":
+                body = _json_body(req)
+                port = body.get("port")
+                if port is None:
+                    return Response(
+                        '{"ok":false,"error":"port required"}',
+                        status_code=400,
+                        headers={"Content-Type": "application/json"},
+                    )
+                result = await broker.connect(str(port))
+                try:
+                    await web.panel.refresh_hello()
+                except Exception as exc:
+                    dbg(2, "serial hello refresh", exc)
+                try:
+                    await web.push_hello()
+                except Exception as exc:
+                    dbg(2, "serial hello push", exc)
+                return Response(
+                    body=json.dumps(result),
+                    headers={"Content-Type": "application/json"},
+                )
+            return Response(
+                body=json.dumps(broker.snapshot()),
                 headers={"Content-Type": "application/json"},
             )
 
@@ -215,6 +270,33 @@ class WebApp:
                 except Exception:
                     body = None
             return body if isinstance(body, dict) else {}
+
+        @app.route("/api/mc_config", methods=["GET", "POST"])
+        async def api_mc_config(req):
+            panel = web.panel
+            if req.method == "POST":
+                body = _json_body(req)
+                items = body.get("items")
+                if not isinstance(items, dict):
+                    items = {}
+                if body.get("key") is not None:
+                    items[str(body.get("key"))] = body.get("value")
+                result = await panel.apply_cs_items(items)
+                return Response(
+                    body=json.dumps(result),
+                    headers={"Content-Type": "application/json"},
+                )
+            items = await panel.fetch_mc_config_items()
+            sim = bool(getattr(panel, "sim", False))
+            if items is None:
+                return Response(
+                    body=json.dumps({"items": {}, "sim": sim, "error": "not linked"}),
+                    headers={"Content-Type": "application/json"},
+                )
+            return Response(
+                body=json.dumps({"items": items, "sim": sim}),
+                headers={"Content-Type": "application/json"},
+            )
 
         @app.route("/api/cmd", methods=["POST"])
         async def api_cmd(req):
@@ -428,7 +510,7 @@ class WebApp:
                 except Exception as exc:
                     dbg(2, "hello refresh", exc)
                 try:
-                    await ws.send(json.dumps(web.panel.hello_dict()))
+                    await ws.send(json.dumps(web._hello_payload()))
                 except Exception:
                     pass
                 await ws.send(json.dumps(web._status_payload()))

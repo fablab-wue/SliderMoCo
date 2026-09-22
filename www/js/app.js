@@ -13,6 +13,8 @@
   var lastStatus = {};
   var cmdSpd = 40;
   var cmdAcc = 100;
+  var cmdDec = 100;
+  var saSym = true;
   var spdMin = 1;
   var spdMax = 100;
   var accMin = 1;
@@ -25,6 +27,7 @@
   var editor = null;
   var lastPhone = null;
   var lastHello = null;
+  var serialDlgOpened = false;
   var mtTimer = 0;
   var pathBufferSize = 32000;
   var playing = false;
@@ -36,6 +39,7 @@
   var playLastT = 0;
   var preroll = null;
   var silentSeek = null;
+  var motorsOnTimeline = false;
   var audioCtx = null;
   var markerEdit = null;
   var mkFilling = false;
@@ -59,6 +63,162 @@
     else send({ mc: line });
   }
 
+  function playheadFps() {
+    var fps = Number(project && project.frame_rate) || 30;
+    if (fps < 1) fps = 1;
+    return fps;
+  }
+
+  function readoutHasEdit(el) {
+    if (!el) return false;
+    var a = document.activeElement;
+    if (!a || !a.classList || !a.classList.contains("ctrl-num")) return false;
+    return el === a || el.contains(a);
+  }
+
+  function parseEditNum(s) {
+    if (s == null) return NaN;
+    return Number(String(s).trim().replace(",", "."));
+  }
+
+  function beginNumEdit(host, opts) {
+    opts = opts || {};
+    if (!host || host.querySelector("input.ctrl-num")) return;
+    var start = opts.value != null ? String(opts.value) : (host.textContent || "").trim();
+    var display = opts.display != null ? String(opts.display) : (host.textContent || "").trim();
+    var inp = document.createElement("input");
+    inp.className = "ctrl-num";
+    inp.type = "text";
+    inp.inputMode = "decimal";
+    inp.value = start;
+    if (opts.title) inp.title = opts.title;
+    host.textContent = "";
+    host.appendChild(inp);
+    inp.focus();
+    inp.select();
+    var done = false;
+    function restore(text) {
+      host.textContent = text == null ? "" : String(text);
+    }
+    function finish(commit) {
+      if (done) return;
+      done = true;
+      var raw = inp.value;
+      if (inp.parentNode) inp.parentNode.removeChild(inp);
+      var n = parseEditNum(raw);
+      if (!commit || !isFinite(n)) {
+        restore(display);
+        return;
+      }
+      if (opts.min != null && isFinite(opts.min) && n < opts.min) n = opts.min;
+      if (opts.max != null && isFinite(opts.max) && n > opts.max) n = opts.max;
+      if (opts.commit) opts.commit(n);
+      if (opts.format) restore(opts.format(n));
+    }
+    inp.addEventListener("keydown", function (ev) {
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        ev.stopPropagation();
+        finish(true);
+      } else if (ev.key === "Escape") {
+        ev.preventDefault();
+        ev.stopPropagation();
+        finish(false);
+      }
+      ev.stopPropagation();
+    });
+    inp.addEventListener("blur", function () {
+      finish(isFinite(parseEditNum(inp.value)));
+    });
+    inp.addEventListener("click", function (ev) { ev.stopPropagation(); });
+    inp.addEventListener("mousedown", function (ev) { ev.stopPropagation(); });
+  }
+
+  function bindNumClick(el, optsFn) {
+    if (!el || el._numEditBound) return;
+    el._numEditBound = true;
+    el.addEventListener("click", function (ev) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      var opts = typeof optsFn === "function" ? optsFn() : optsFn;
+      beginNumEdit(el, opts || {});
+    });
+  }
+
+  function setVu(el, val, unit) {
+    if (!el || readoutHasEdit(el)) return;
+    var v = el.querySelector(".v");
+    var u = el.querySelector(".u");
+    if (v && readoutHasEdit(v)) return;
+    if (v) v.textContent = val;
+    if (u) u.textContent = unit || "";
+  }
+
+  function syncPlayheadReadout(t) {
+    t = Number(t);
+    if (!isFinite(t)) t = 0;
+    setVu($("tlTime"), t.toFixed(2), "s");
+    setVu($("tlFrame"), String(Math.round(t * playheadFps()) + 1), "F");
+    setVu(document.querySelector(".js-ctrl-time"), t.toFixed(2), "s");
+  }
+
+  function setPlayheadPreview(t) {
+    if (!editor) return;
+    t = editor.clampT(t);
+    editor.playhead = t;
+    editor.draw();
+    onPlayhead(t, false);
+  }
+
+  function bindPlayheadNumEdits() {
+    bindNumClick(document.querySelector("#tlTime .v"), function () {
+      var t = editor ? editor.playhead : 0;
+      return {
+        value: t.toFixed(2),
+        display: t.toFixed(2),
+        title: "Playhead time (Enter)",
+        min: 0,
+        commit: function (n) { setPlayheadPreview(n); },
+        format: function (n) {
+          return editor ? editor.playhead.toFixed(2) : Number(n).toFixed(2);
+        }
+      };
+    });
+    bindNumClick(document.querySelector("#tlFrame .v"), function () {
+      var t = editor ? editor.playhead : 0;
+      var fps = playheadFps();
+      var fr = Math.round(t * fps) + 1;
+      return {
+        value: String(fr),
+        display: String(fr),
+        title: "Playhead frame (Enter)",
+        min: 1,
+        commit: function (n) {
+          n = Math.round(n);
+          if (n < 1) n = 1;
+          setPlayheadPreview((n - 1) / fps);
+        },
+        format: function (n) {
+          if (editor) return String(Math.round(editor.playhead * playheadFps()) + 1);
+          return String(Math.round(n));
+        }
+      };
+    });
+    bindNumClick(document.querySelector(".js-ctrl-time .v"), function () {
+      var t = editor ? editor.playhead : 0;
+      return {
+        value: t.toFixed(2),
+        display: t.toFixed(2),
+        title: "Playhead time (Enter)",
+        min: 0,
+        commit: function (n) { setPlayheadPreview(n); },
+        format: function (n) {
+          return editor ? editor.playhead.toFixed(2) : Number(n).toFixed(2);
+        }
+      };
+    });
+  }
+
   function isUnset(v) {
     if (v == null || v === "") return true;
     var t = String(v).trim().toLowerCase();
@@ -75,6 +235,15 @@
     n = Number(n);
     if (isNaN(n)) n = 0;
     return n.toFixed(d == null ? 1 : d);
+  }
+
+  function fmtPose(n) {
+    n = Number(n);
+    if (isNaN(n)) n = 0;
+    var a = Math.abs(n);
+    if (a >= 100) return n.toFixed(0);
+    if (a >= 10) return n.toFixed(1);
+    return n.toFixed(2);
   }
 
   function axisColor(id) {
@@ -167,6 +336,13 @@
     }
     var axes = liveAxes();
     if (window.SWUi) SWUi.applyHello(h);
+    if (h.session) {
+      if (h.session.ss != null) cmdSpd = Number(h.session.ss);
+      if (h.session.sa != null) cmdAcc = Number(h.session.sa);
+      if (h.session.decel != null) cmdDec = Number(h.session.decel);
+      else if (h.session.sa != null) cmdDec = cmdAcc;
+      syncSsSaUi();
+    }
     renderInfo(axes);
     fillAxisJog(axes);
     fillCtrlAxes(axes);
@@ -177,6 +353,8 @@
       el.classList.toggle("hidden", n < 2);
     });
     pushEditorLimits();
+    syncSerialCaption(h);
+    maybeOpenSerialDlg(h);
   }
 
   function renderInfo(axes) {
@@ -301,7 +479,7 @@
         '<span class="ctrl-name"></span>' +
         '<span class="ctrl-sep"></span>' +
         '<span class="ctrl-live">' +
-          '<span class="ctrl-val js-ctrl-pos"><span class="v"></span><span class="u"></span></span>' +
+          '<span class="ctrl-val js-ctrl-pos"><span class="v num-edit" title="Go to (Enter)"></span><span class="u"></span></span>' +
           '<span class="ctrl-val js-ctrl-spd"><span class="v"></span><span class="u"></span></span>' +
           '<span class="ctrl-val js-ctrl-acc"><span class="v"></span><span class="u"></span></span>' +
         "</span>" +
@@ -365,11 +543,13 @@
       };
     }
     function jumpLane(dir, seek) {
-      if (!editor || !editor.jumpLaneKey(id, dir)) return;
+      if (!editor) return;
+      var oldT = editor.playhead;
+      if (!editor.jumpLaneKey(id, dir)) return;
       var t = editor.playhead;
-      if ($("tlTime")) $("tlTime").textContent = t.toFixed(2) + " s";
+      syncPlayheadReadout(t);
       syncCtrlReadouts();
-      if (seek) onPlayhead(t, true, true);
+      if (seek) seekPlayheadMotors(oldT, t);
     }
     function bindJump(el, dir) {
       if (!el) return;
@@ -393,18 +573,29 @@
         if (editor) editor.keyAtPlayhead(editor.live, id);
       };
     }
+    var posV = row.querySelector(".js-ctrl-pos .v");
+    if (posV) {
+      bindNumClick(posV, function () {
+        var ax = axisEntry(id);
+        var lim = axisMinMax(id);
+        var live = ax && ax.pos != null ? Number(ax.pos) : 0;
+        return {
+          value: live,
+          display: fmtPose(live),
+          min: lim.min,
+          max: lim.max,
+          title: "Go to (Enter)",
+          commit: function (n) { gotoAxis(id, n); },
+          format: fmtPose
+        };
+      });
+    }
   }
 
   function syncCtrlReadouts() {
     var axes = liveAxes();
     var pose = editor ? editor.poseAt(editor.playhead) : {};
-    var timeEl = document.querySelector(".js-ctrl-time");
-    if (timeEl) {
-      var tv = timeEl.querySelector(".v");
-      var tu = timeEl.querySelector(".u");
-      if (tv) tv.textContent = (editor ? editor.playhead : 0).toFixed(2);
-      if (tu) tu.textContent = "s";
-    }
+    setVu(document.querySelector(".js-ctrl-time"), (editor ? editor.playhead : 0).toFixed(2), "s");
     Array.prototype.forEach.call(document.querySelectorAll(".ctrl-line"), function (row) {
       var id = Number(row.getAttribute("data-ax"));
       var ax = null;
@@ -415,18 +606,19 @@
       var unit = (ax && ax.unit) || "";
       var nameEl = row.querySelector(".ctrl-name");
       if (nameEl) nameEl.textContent = (ax && ax.name) || ("A" + id);
-      function setNum(sel, val, suffix) {
+      function setNum(sel, val, suffix, fmtFn) {
         var el = row.querySelector(sel);
-        if (!el) return;
+        if (!el || readoutHasEdit(el)) return;
         var v = el.querySelector(".v");
         var u = el.querySelector(".u");
-        if (v) v.textContent = fmt(val);
+        if (v && readoutHasEdit(v)) return;
+        if (v) v.textContent = (fmtFn || fmt)(val);
         if (u) u.textContent = suffix || "";
       }
-      setNum(".js-ctrl-pos", ax ? ax.pos : 0, unit);
+      setNum(".js-ctrl-pos", ax ? ax.pos : 0, unit, fmtPose);
       setNum(".js-ctrl-spd", ax ? ax.spd : 0, "/s");
       setNum(".js-ctrl-acc", ax ? ax.acc : 0, "/s²");
-      setNum(".js-ctrl-pose", pose[id], unit);
+      setNum(".js-ctrl-pose", pose[id], unit, fmtPose);
       row.classList.toggle("active", !!(editor && editor.activeId === id));
       var vis = !editor || editor.visible[id] !== false;
       var locked = !!(editor && editor.locked[id]);
@@ -503,7 +695,7 @@
         if (!editor) return;
         editor.playhead = 0;
         editor.draw();
-        if ($("tlTime")) $("tlTime").textContent = "0.00 s";
+        syncPlayheadReadout(0);
         syncCtrlReadouts();
         seekAtMax(editor.poseAt(0));
       };
@@ -514,17 +706,19 @@
         var t = editor.motionDuration();
         editor.playhead = t;
         editor.draw();
-        if ($("tlTime")) $("tlTime").textContent = t.toFixed(2) + " s";
+        syncPlayheadReadout(t);
         syncCtrlReadouts();
         seekAtMax(editor.poseAt(t));
       };
     }
     function jumpVisibleKey(dir, seek) {
-      if (!editor || !editor.jumpVisibleKey(dir)) return;
+      if (!editor) return;
+      var oldT = editor.playhead;
+      if (!editor.jumpVisibleKey(dir)) return;
       var t = editor.playhead;
-      if ($("tlTime")) $("tlTime").textContent = t.toFixed(2) + " s";
+      syncPlayheadReadout(t);
       syncCtrlReadouts();
-      if (seek) onPlayhead(t, true, true);
+      if (seek) seekPlayheadMotors(oldT, t);
     }
     function bindJumpAll(el, dir) {
       if (!el) return;
@@ -556,6 +750,40 @@
     Array.prototype.forEach.call(document.querySelectorAll(".js-ctrl-dlg"), function (btn) {
       btn.onclick = function () { openFloatWin(btn.getAttribute("data-float")); };
     });
+    bindNumClick(document.querySelector(".ctrl-sliders .js-ss-val"), function () {
+      return {
+        value: cmdSpd,
+        display: fmt(cmdSpd),
+        min: spdMin,
+        max: spdMax,
+        title: "Session SPEED (Enter)",
+        commit: function (n) { setSessionSpeed(n); },
+        format: fmt
+      };
+    });
+    bindNumClick(document.querySelector(".ctrl-sliders .js-acc-val"), function () {
+      return {
+        value: cmdAcc,
+        display: fmt(cmdAcc),
+        min: accMin,
+        max: accMax,
+        title: "Session ACCEL (Enter)",
+        commit: function (n) { setSessionAccel(n); },
+        format: fmt
+      };
+    });
+    bindNumClick(document.querySelector(".ctrl-sliders .js-dec-val"), function () {
+      return {
+        value: cmdDec,
+        display: fmt(cmdDec),
+        min: accMin,
+        max: accMax,
+        title: "Session DECEL (Enter)",
+        commit: function (n) { setSessionDecel(n); },
+        format: fmt
+      };
+    });
+    bindPlayheadNumEdits();
     syncCtrlAllEyeLock();
     syncCtrlStatus();
   }
@@ -660,6 +888,25 @@
     var v = softVal(axis, side);
     if (v == null) return;
     sendMc(slotLine("MT", axis, v.toFixed(2)));
+  }
+
+  function axisMinMax(axis) {
+    var ax = axisEntry(axis);
+    var mn = ax ? cfgNum(ax.min) : null;
+    var mx = ax ? cfgNum(ax.max) : null;
+    if (mn == null) mn = physicalVal(axis, "min");
+    if (mx == null) mx = physicalVal(axis, "max");
+    return { min: mn, max: mx };
+  }
+
+  function gotoAxis(id, v) {
+    v = Number(v);
+    if (!isFinite(v)) return;
+    var lim = axisMinMax(id);
+    if (lim.min != null && v < lim.min) v = lim.min;
+    if (lim.max != null && v > lim.max) v = lim.max;
+    sendMc("SE 1");
+    sendMc(slotLine("MT", id, v.toFixed(2)));
   }
 
   function syncLimitBtns() {
@@ -778,11 +1025,13 @@
     var axes = s.axes || [];
     if (window.SWUi) SWUi.applyStatus(s);
     if (axes.length) renderInfo(axes);
-    if (s.session && s.session.ss != null && !silentSeek) {
-      cmdSpd = Number(s.session.ss);
-      Array.prototype.forEach.call(document.querySelectorAll(".js-ss-val"), function (el) {
-        el.textContent = fmt(cmdSpd);
-      });
+    if (s.session && !silentSeek) {
+      var ssCh = false;
+      if (s.session.ss != null) { cmdSpd = Number(s.session.ss); ssCh = true; }
+      if (s.session.sa != null) { cmdAcc = Number(s.session.sa); ssCh = true; }
+      if (s.session.decel != null) { cmdDec = Number(s.session.decel); ssCh = true; }
+      else if (s.session.sa != null) cmdDec = cmdAcc;
+      if (ssCh) syncSsSaUi();
     }
     updateAbcEtas();
     abcOnStatus();
@@ -816,9 +1065,212 @@
     el.classList.toggle("hidden", !show);
   }
 
+  function isDesktopHost(d) {
+    if (window.SHLayout && SHLayout.phoneMode && SHLayout.phoneMode()) return false;
+    d = d || lastHello || lastStatus || {};
+    var w = d.wifi || (lastHello && lastHello.wifi) || (lastStatus && lastStatus.wifi);
+    return !!(w && w.mode === "host");
+  }
+
+  function serialPortLabel(d) {
+    d = d || lastHello || lastStatus || {};
+    var p = d.serial_port;
+    if (p == null || p === "") {
+      if (d.sim) return "mock";
+      return "—";
+    }
+    return String(p);
+  }
+
+  function syncSerialCaption(d) {
+    d = d || lastHello || lastStatus || {};
+    var btn = $("btnSerial");
+    var off = $("offline");
+    var host = isDesktopHost(d);
+    if (off) off.classList.toggle("host-serial", host);
+    if (!btn) return;
+    btn.classList.toggle("hidden", !host);
+    if (!host) return;
+    var label = serialPortLabel(d);
+    btn.textContent = label;
+    var linked = !!(d.sim || d.linked);
+    btn.classList.toggle("mock", !!(d.sim && linked));
+    btn.classList.toggle("lost", !linked);
+    if (linked && d.sim) btn.title = "Mock MC";
+    else if (linked) btn.title = d.mc_name || "SliderMC";
+    else btn.title = d.link_reason || "No MC — pick a port";
+  }
+
+  function serialSetErr(msg) {
+    var el = $("serialErr");
+    if (el) el.textContent = msg || "";
+  }
+
+  function serialFillPorts(info) {
+    var box = $("serialPorts");
+    var inp = $("serialPort");
+    if (!box) return;
+    box.innerHTML = "";
+    var ports = (info && info.ports) || [];
+    var cur = (inp && inp.value) || (info && (info.current || info.last)) || "";
+    if (cur === "mock") cur = "";
+    ports.forEach(function (p) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "serial-port-row" + (p.device === cur ? " on" : "");
+      b.setAttribute("data-port", p.device);
+      b.innerHTML = "<span></span>" + (p.desc ? "<span class=\"desc\"></span>" : "");
+      b.querySelector("span").textContent = p.device;
+      if (p.desc) b.querySelector(".desc").textContent = p.desc;
+      b.onclick = function () {
+        if (inp) inp.value = p.device;
+        Array.prototype.forEach.call(box.querySelectorAll(".serial-port-row"), function (x) {
+          x.classList.toggle("on", x.getAttribute("data-port") === p.device);
+        });
+      };
+      box.appendChild(b);
+    });
+    if (!ports.length) {
+      var empty = document.createElement("p");
+      empty.className = "hint";
+      empty.textContent = "No serial ports found. Type a name below.";
+      box.appendChild(empty);
+    }
+  }
+
+  function serialLoadList() {
+    return fetch("/api/serial").then(function (r) {
+      if (!r.ok) throw new Error("not found");
+      return r.json();
+    }).then(function (info) {
+      var inp = $("serialPort");
+      if (inp && !inp.value) {
+        var pre = info.current && info.current !== "mock" ? info.current : (info.last || "");
+        if (pre && pre !== "mock") inp.value = pre;
+      }
+      serialFillPorts(info);
+      if (info.error && info.error !== "ok" && !info.linked && !info.sim) {
+        serialSetErr(info.error);
+      }
+      return info;
+    }).catch(function () {
+      serialSetErr("Serial picker is not available on this host.");
+      return null;
+    });
+  }
+
+  function openSerialDlg() {
+    var dlg = $("serialDlg");
+    if (!dlg || !dlg.showModal) return;
+    serialSetErr("");
+    serialLoadList();
+    if (!dlg.open) dlg.showModal();
+  }
+
+  function maybeOpenSerialDlg(d) {
+    if (!isDesktopHost(d)) return;
+    if (d && (d.sim || d.linked)) {
+      serialDlgOpened = true;
+      return;
+    }
+    if (serialDlgOpened) return;
+    serialDlgOpened = true;
+    openSerialDlg();
+  }
+
+  function serialBusy(on) {
+    ["serialConnect", "serialMock", "serialRefresh", "serialCancel"].forEach(function (id) {
+      var el = $(id);
+      if (el) el.disabled = !!on;
+    });
+  }
+
+  function serialPost(port) {
+    serialBusy(true);
+    serialSetErr(port === "mock" ? "Starting mock…" : "Connecting…");
+    try { cancelTimelinePlay(); } catch (e) {}
+    try { cancelAbcLoop(); } catch (e) {}
+    sendMc("MS");
+    return fetch("/api/serial", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ port: port })
+    }).then(function (r) {
+      return r.json().then(function (info) {
+        info = info || {};
+        info.http = r.status;
+        return info;
+      });
+    }).then(function (info) {
+      serialBusy(false);
+      if (info.ok) {
+        serialSetErr("");
+        var dlg = $("serialDlg");
+        if (dlg && dlg.open) dlg.close();
+        syncSerialCaption(info);
+        return info;
+      }
+      serialFillPorts(info);
+      serialSetErr(info.error || "Connect failed");
+      return info;
+    }).catch(function (err) {
+      serialBusy(false);
+      serialSetErr((err && err.message) || "Connect failed");
+      return null;
+    });
+  }
+
+  function bindSerialUi() {
+    var btn = $("btnSerial");
+    if (btn) btn.onclick = function () { openSerialDlg(); };
+    var off = $("offline");
+    if (off && !off._serialBound) {
+      off._serialBound = true;
+      off.addEventListener("click", function () {
+        if (isDesktopHost()) openSerialDlg();
+      });
+    }
+    var dlg = $("serialDlg");
+    if (dlg && !dlg._serialBound) {
+      dlg._serialBound = true;
+      dlg.addEventListener("cancel", function (ev) {
+        if (!(lastHello && (lastHello.linked || lastHello.sim)) &&
+            !(lastStatus && (lastStatus.linked || lastStatus.sim))) {
+          ev.preventDefault();
+          serialPost("mock");
+        }
+      });
+    }
+    if ($("serialRefresh")) $("serialRefresh").onclick = function () { serialLoadList(); };
+    if ($("serialConnect")) {
+      $("serialConnect").onclick = function () {
+        var v = ($("serialPort") && $("serialPort").value) || "";
+        v = String(v).trim();
+        if (!v) {
+          serialSetErr("Enter or pick a port.");
+          return;
+        }
+        serialPost(v);
+      };
+    }
+    if ($("serialMock")) $("serialMock").onclick = function () { serialPost("mock"); };
+    if ($("serialCancel")) {
+      $("serialCancel").onclick = function () {
+        var linked = (lastHello && (lastHello.linked || lastHello.sim)) ||
+          (lastStatus && (lastStatus.linked || lastStatus.sim));
+        if (!linked) serialPost("mock");
+        else {
+          var dlg = $("serialDlg");
+          if (dlg && dlg.open) dlg.close();
+        }
+      };
+    }
+  }
+
   function syncMcLinkBanner(d) {
     if (!d || typeof d !== "object") return;
     if (!ws || ws.readyState !== 1) return;
+    syncSerialCaption(d);
     if (d.sim || d.linked) {
       setOfflineBanner("Link lost…", false);
       return;
@@ -827,6 +1279,8 @@
     var msg = "MC lost";
     if (reason === "not an MC" || reason.indexOf("protocol") === 0) {
       msg = "not an MC";
+    } else if (!d.serial_port && !reason) {
+      msg = "No MC";
     }
     setOfflineBanner(msg, true);
   }
@@ -857,21 +1311,43 @@
     if (!el) return;
     var v = sliderToSpeed(Number(el.value) / 1000);
     cmdSpd = v;
-    Array.prototype.forEach.call(document.querySelectorAll(".js-ss-val"), function (n) { n.textContent = fmt(v); });
+    paintSsSaReadouts();
     var now = Date.now();
     if (!force && now - ssTimer < SS_MS) return;
     ssTimer = now;
     sendMc("SS " + v.toFixed(3));
   }
 
+  function sliderFromAcc(v) {
+    return String(Math.round(((Number(v) - accMin) / Math.max(1e-9, accMax - accMin)) * 1000));
+  }
+
+  function accFromSlider(el) {
+    var t = Number(el && el.value) / 1000;
+    return accMin + (accMax - accMin) * t;
+  }
+
+  function saLine() {
+    return "SA " + Number(cmdAcc).toFixed(3) + " " + Number(cmdDec).toFixed(3);
+  }
+
+  function saValText() {
+    return fmt(cmdAcc) + " / " + fmt(cmdDec);
+  }
+
   function emitSa(el) {
     el = el && el.tagName ? el : q(".js-acc");
     if (!el) return;
-    var t = Number(el.value) / 1000;
-    var v = accMin + (accMax - accMin) * t;
-    cmdAcc = v;
-    Array.prototype.forEach.call(document.querySelectorAll(".js-sa-val"), function (n) { n.textContent = fmt(v); });
-    sendMc("SA " + v.toFixed(3));
+    var v = accFromSlider(el);
+    var dec = el.classList && el.classList.contains("js-dec");
+    if (dec) cmdDec = v;
+    else cmdAcc = v;
+    if (saSym) {
+      if (dec) cmdAcc = cmdDec;
+      else cmdDec = cmdAcc;
+    }
+    syncSsSaUi();
+    sendMc(saLine());
   }
 
   function poseLine(pose) {
@@ -966,18 +1442,36 @@
     syncCtrlPlayBtns();
   }
 
-  function syncSsSaUi() {
+  function paintSsSaReadouts() {
     Array.prototype.forEach.call(document.querySelectorAll(".js-ss-val"), function (n) {
+      if (readoutHasEdit(n)) return;
       n.textContent = fmt(cmdSpd);
     });
-    Array.prototype.forEach.call(document.querySelectorAll(".js-sa-val"), function (n) {
+    Array.prototype.forEach.call(document.querySelectorAll(".js-acc-val"), function (n) {
+      if (readoutHasEdit(n)) return;
       n.textContent = fmt(cmdAcc);
     });
+    Array.prototype.forEach.call(document.querySelectorAll(".js-dec-val"), function (n) {
+      if (readoutHasEdit(n)) return;
+      n.textContent = fmt(cmdDec);
+    });
+    Array.prototype.forEach.call(document.querySelectorAll(".js-sa-val"), function (n) {
+      if (n.querySelector(".js-acc-val, .js-dec-val")) return;
+      if (readoutHasEdit(n)) return;
+      n.textContent = saValText();
+    });
+  }
+
+  function syncSsSaUi() {
+    paintSsSaReadouts();
     Array.prototype.forEach.call(document.querySelectorAll(".js-spd"), function (el) {
       el.value = String(Math.round(speedToSlider(cmdSpd)));
     });
     Array.prototype.forEach.call(document.querySelectorAll(".js-acc"), function (el) {
-      el.value = String(Math.round(((cmdAcc - accMin) / Math.max(1e-9, accMax - accMin)) * 1000));
+      el.value = sliderFromAcc(cmdAcc);
+    });
+    Array.prototype.forEach.call(document.querySelectorAll(".js-dec"), function (el) {
+      el.value = sliderFromAcc(cmdDec);
     });
   }
 
@@ -998,9 +1492,22 @@
     if (v < accMin) v = accMin;
     if (v > accMax) v = accMax;
     cmdAcc = v;
+    if (saSym) cmdDec = v;
     syncSsSaUi();
     if (window.SWUi && typeof SWUi.syncAccelUi === "function") SWUi.syncAccelUi(v);
-    sendMc("SA " + v.toFixed(3));
+    sendMc(saLine());
+  }
+
+  function setSessionDecel(v) {
+    v = Number(v);
+    if (!isFinite(v)) return;
+    if (v < accMin) v = accMin;
+    if (v > accMax) v = accMax;
+    cmdDec = v;
+    if (saSym) cmdAcc = v;
+    syncSsSaUi();
+    if (window.SWUi && typeof SWUi.syncAccelUi === "function") SWUi.syncAccelUi(saSym ? v : cmdAcc);
+    sendMc(saLine());
   }
 
   function sessionSpd() {
@@ -1022,8 +1529,12 @@
   function restoreSessionSsSa() {
     var spd = sessionSpd();
     var acc = sessionAcc();
+    var dec = Number(cmdDec);
     if (isFinite(spd)) sendMc("SS " + spd.toFixed(3), true);
-    if (isFinite(acc)) sendMc("SA " + acc.toFixed(3), true);
+    if (isFinite(acc)) {
+      if (!isFinite(dec)) dec = acc;
+      sendMc("SA " + acc.toFixed(3) + " " + dec.toFixed(3), true);
+    }
   }
 
   function finishSilentSeek() {
@@ -1039,10 +1550,11 @@
   function seekAtMax(pose) {
     var mx = envelopeMax();
     sendMc("SS " + mx.spd.toFixed(3), true);
-    sendMc("SA " + mx.acc.toFixed(3), true);
+    sendMc("SA " + mx.acc.toFixed(3) + " " + mx.acc.toFixed(3), true);
     sendMc("SE 1");
     var line = poseLine(pose);
     if (line) sendMc(line);
+    motorsOnTimeline = true;
     if (silentSeek && silentSeek.timer) clearTimeout(silentSeek.timer);
     silentSeek = { armed: false, onIdle: null, timer: 0 };
     window.__shSilentSsSa = true;
@@ -1067,8 +1579,96 @@
     return off;
   }
 
-  function onPlayhead(t, commit, force) {
-    if ($("tlTime")) $("tlTime").textContent = t.toFixed(2) + " s";
+  function hasLivePose() {
+    if (!editor) return false;
+    var any = false;
+    editor.lanes.forEach(function (ln) {
+      if (!editor.visible[ln.id]) return;
+      if (currentPos(ln.id) != null) any = true;
+    });
+    return any;
+  }
+
+  function onCurveAt(t) {
+    if (!editor || !hasLivePose()) return false;
+    return !poseOffEndpoint(editor.poseAt(t));
+  }
+
+  function followOn() {
+    var el = $("tlFollow");
+    if (!el) return true;
+    return !!el.checked;
+  }
+
+  function mtToTime(t) {
+    if (!editor) return;
+    t = editor.clampT(t);
+    editor.playhead = t;
+    editor.draw();
+    syncPlayheadReadout(t);
+    syncCtrlReadouts();
+    smSyncFromPlayhead(t);
+    var line = poseLine(editor.poseAt(t));
+    if (line) {
+      sendMc("SE 1");
+      sendMc(line);
+    }
+    motorsOnTimeline = true;
+  }
+
+  function playBetween(fromT, toT) {
+    if (!editor) return false;
+    fromT = editor.clampT(fromT);
+    toT = editor.clampT(toT);
+    if (Math.abs(toT - fromT) < 1e-6) return true;
+    if (editor.hasLimitViolation()) return false;
+    var dir = toT >= fromT ? 1 : -1;
+    var wasPlaying = playing;
+    cancelTimelinePlay();
+    if (wasPlaying) sendMc("MS");
+    var samples = sampleDeltas(fromT, toT);
+    if (!samples || !samples.length) return false;
+    nudgePathToLive(samples, fromT, toT);
+    editor.playhead = toT;
+    editor.pathHead = fromT;
+    editor.draw();
+    syncPlayheadReadout(toT);
+    syncCtrlReadouts();
+    smSyncFromPlayhead(toT);
+    sendMc("SE 1");
+    sendPath(samples, function () {
+      var hz = (editor && editor.playHz) || 50;
+      startPlayClock(fromT, toT, dir, samples.length / hz, { pathSeek: true });
+    });
+    motorsOnTimeline = true;
+    return true;
+  }
+
+  function seekPlayheadMotors(oldT, newT, opts) {
+    if (!editor) return;
+    opts = opts || {};
+    newT = editor.clampT(newT);
+    oldT = editor.clampT(oldT);
+    if (Math.abs(newT - oldT) < 1e-6) {
+      editor.playhead = newT;
+      editor.draw();
+      syncPlayheadReadout(newT);
+      syncCtrlReadouts();
+      smSyncFromPlayhead(newT);
+      return;
+    }
+    var usePath = followOn() || !!opts.ctrl;
+    if (usePath && (motorsOnTimeline || onCurveAt(oldT)) && playBetween(oldT, newT)) return;
+    mtToTime(newT);
+  }
+
+  function onPlayhead(t, commit, force, extra) {
+    extra = extra || {};
+    if (commit && extra.seekMotors) {
+      seekPlayheadMotors(extra.oldT != null ? extra.oldT : t, t, { ctrl: !!extra.ctrl });
+      return;
+    }
+    syncPlayheadReadout(t);
     syncCtrlReadouts();
     smSyncFromPlayhead(t);
     if (!commit || !editor) return;
@@ -1081,6 +1681,7 @@
       sendMc("SE 1");
       sendMc(line);
     }
+    motorsOnTimeline = true;
   }
 
   function browserBeep() {
@@ -1131,16 +1732,27 @@
     }
     if (silentSeek) finishSilentSeek();
     playing = false;
-    if (editor) editor.playing = false;
+    if (editor) {
+      editor.playing = false;
+      editor.pathHead = null;
+    }
+    motorsOnTimeline = false;
     if (playRaf) {
       cancelAnimationFrame(playRaf);
       playRaf = 0;
     }
+    if (editor) editor.draw();
     syncCtrlPlayBtns();
   }
   window.__shCancelTimelinePlay = cancelTimelinePlay;
 
-  function startPlayClock(fromT, toT, dir) {
+  function startPlayClock(fromT, toT, dir, wallSec, opts) {
+    opts = opts || {};
+    var pathSeek = !!opts.pathSeek;
+    var wall = Number(wallSec);
+    if (!(wall > 0)) wall = Math.abs(toT - fromT);
+    if (!(wall > 0)) wall = 1e-6;
+    var span = toT - fromT;
     playing = true;
     playDir = dir;
     playhead0 = fromT;
@@ -1149,59 +1761,177 @@
     playT0 = performance.now();
     if (editor) {
       editor.playing = true;
-      editor.playhead = fromT;
+      if (pathSeek) editor.pathHead = fromT;
+      else editor.playhead = fromT;
       editor.draw();
     }
     fireMarkersCrossing(fromT - 1e-6, fromT, dir);
     syncCtrlPlayBtns();
     function tick(now) {
       if (!playing || !editor) return;
-      var t = playhead0 + playDir * ((now - playT0) / 1000);
-      if ((dir > 0 && t >= playEndT) || (dir < 0 && t <= playEndT)) {
-        t = playEndT;
+      var u = (now - playT0) / 1000 / wall;
+      var t;
+      if (u >= 1) {
+        t = toT;
         fireMarkersCrossing(playLastT, t, dir);
-        editor.playhead = t;
-        if ($("tlTime")) $("tlTime").textContent = t.toFixed(2) + " s";
         playing = false;
         editor.playing = false;
-        editor.draw();
         playRaf = 0;
+        if (pathSeek) {
+          editor.pathHead = null;
+          editor.draw();
+          syncCtrlPlayBtns();
+          mtToTime(toT);
+          return;
+        }
+        editor.playhead = t;
+        syncPlayheadReadout(t);
+        editor.draw();
         syncCtrlPlayBtns();
         return;
       }
+      t = fromT + span * u;
       fireMarkersCrossing(playLastT, t, dir);
       playLastT = t;
-      editor.playhead = t;
-      if ($("tlTime")) $("tlTime").textContent = t.toFixed(2) + " s";
+      if (pathSeek) editor.pathHead = t;
+      else {
+        editor.playhead = t;
+        syncPlayheadReadout(t);
+      }
       editor.draw();
       playRaf = requestAnimationFrame(tick);
     }
     playRaf = requestAnimationFrame(tick);
   }
 
+  function poseNum(pose, j) {
+    if (!pose) return null;
+    var v = pose[j];
+    if (v == null) v = pose[String(j)];
+    if (v == null || v === "") return null;
+    v = Number(v);
+    return isNaN(v) ? null : v;
+  }
+
+  function hasEditorLane(j) {
+    if (!editor || !editor.lanes) return false;
+    j = Number(j);
+    var i;
+    for (i = 0; i < editor.lanes.length; i++) {
+      if (Number(editor.lanes[i].id) === j) return true;
+    }
+    return false;
+  }
+
+  function captureLivePose(fallbackT) {
+    var curve = editor ? editor.poseAt(fallbackT) : {};
+    var pose = {};
+    var n = Math.max(1, Math.min(6, liveAxisCount()));
+    var j, live, c;
+    for (j = 1; j <= n; j++) {
+      if (!hasEditorLane(j)) continue;
+      c = poseNum(curve, j);
+      live = currentPos(j);
+      if (
+        editor.visible[j] !== false &&
+        live != null &&
+        isFinite(Number(live)) &&
+        c != null &&
+        Math.abs(Number(live) - c) <= 1.0
+      ) {
+        pose[j] = Number(live);
+      } else if (c != null) pose[j] = c;
+    }
+    return pose;
+  }
+
+  function closePathSamples(samples, nAx, start, end) {
+    var j, i, k, want, sum, err, v;
+    for (j = 1; j <= nAx; j++) {
+      if (!hasEditorLane(j)) continue;
+      var e = poseNum(end, j);
+      var s = poseNum(start, j);
+      if (e == null && s == null) continue;
+      if (e == null) e = s;
+      if (s == null) s = e;
+      want = Math.round((e - s) * 1000);
+      sum = 0;
+      for (i = 0; i < samples.length; i++) sum += samples[i][j - 1];
+      err = want - sum;
+      if (Math.abs(err) > 2000) err = err > 0 ? 2000 : -2000;
+      k = samples.length - 1;
+      while (err && k >= 0 && k >= samples.length - 3) {
+        v = samples[k][j - 1] + err;
+        if (v > 32767) {
+          err = v - 32767;
+          v = 32767;
+        } else if (v < -32768) {
+          err = v + 32768;
+          v = -32768;
+        } else err = 0;
+        samples[k][j - 1] = v;
+        k--;
+      }
+    }
+  }
+
+  function nudgePathToLive(samples, fromT, toT) {
+    if (!samples || !samples.length || !editor) return;
+    var origin = captureLivePose(fromT);
+    var nAx = samples[0].length;
+    var curve0 = editor.poseAt(fromT);
+    var j, live, c0, adj, v;
+    for (j = 1; j <= nAx; j++) {
+      if (!hasEditorLane(j) || editor.visible[j] === false) continue;
+      live = poseNum(origin, j);
+      c0 = poseNum(curve0, j);
+      if (live == null || c0 == null) continue;
+      adj = Math.round((c0 - live) * 1000);
+      if (!adj) continue;
+      v = samples[0][j - 1] + adj;
+      if (v > 32767) v = 32767;
+      if (v < -32768) v = -32768;
+      samples[0][j - 1] = v;
+    }
+    closePathSamples(samples, nAx, origin, editor.poseAt(toT));
+  }
+
   function sampleDeltas(fromT, toT, hz) {
     hz = Number(hz);
     if (!(hz > 0)) hz = (editor && editor.playHz) || 50;
     var dt = 1 / hz;
+    var dir = toT >= fromT ? 1 : -1;
     var samples = [];
-    var n = Math.ceil(Math.max(0, toT - fromT) / dt);
+    var n = Math.ceil(Math.abs(toT - fromT) / dt);
     if (n > pathBufferSize) return null;
     var nAx = Math.max(1, Math.min(6, liveAxisCount()));
     var prev = editor.poseAt(fromT);
-    var i, j, t, pose, row, d;
+    var i, j, t, pose, row, d, p0, p1;
     for (i = 1; i <= n; i++) {
-      t = fromT + i * dt;
-      if (t > toT) t = toT;
+      t = fromT + dir * i * dt;
+      if (dir > 0 && t > toT) t = toT;
+      if (dir < 0 && t < toT) t = toT;
       pose = editor.poseAt(t);
       row = [];
       for (j = 1; j <= nAx; j++) {
-        d = Math.round(((pose[j] || 0) - (prev[j] || 0)) * 1000);
+        if (!hasEditorLane(j)) {
+          row.push(0);
+          continue;
+        }
+        p1 = poseNum(pose, j);
+        p0 = poseNum(prev, j);
+        if (p1 == null) p1 = 0;
+        if (p0 == null) p0 = 0;
+        d = Math.round((p1 - p0) * 1000);
         if (d > 32767) d = 32767;
         if (d < -32768) d = -32768;
         row.push(d);
       }
       samples.push(row);
       prev = pose;
+    }
+    if (samples.length) {
+      closePathSamples(samples, nAx, editor.poseAt(fromT), editor.poseAt(toT));
     }
     return samples;
   }
@@ -1294,7 +2024,7 @@
     seekAtMax(endpoint);
     editor.playhead = 0;
     editor.draw();
-    if ($("tlTime")) $("tlTime").textContent = "0.00 s";
+    syncPlayheadReadout(0);
     preroll = { seeking: true, then: go };
     if (!mcBusy()) {
       preroll.seeking = false;
@@ -1317,25 +2047,15 @@
       fromT = mot;
       toT = 0;
       dir = -1;
-      samples = sampleDeltas(0, mot);
+      samples = sampleDeltas(fromT, toT);
       if (!samples) return;
-      samples.reverse();
-      samples.forEach(function (s) {
-        var j;
-        for (j = 0; j < s.length; j++) s[j] = -s[j];
-      });
     } else if (mode === "fromRev") {
       fromT = editor.playhead;
       toT = 0;
       dir = -1;
       if (fromT <= 1e-6) return;
-      samples = sampleDeltas(0, fromT);
+      samples = sampleDeltas(fromT, toT);
       if (!samples) return;
-      samples.reverse();
-      samples.forEach(function (s) {
-        var j;
-        for (j = 0; j < s.length; j++) s[j] = -s[j];
-      });
     } else if (mode === "from") {
       fromT = editor.playhead;
       toT = dur;
@@ -1352,7 +2072,11 @@
     }
     function go() {
       editor.playhead = fromT;
-      sendPath(samples, function () { startPlayClock(fromT, toT, dir); });
+      sendPath(samples, function () {
+        var hz = (editor && editor.playHz) || 50;
+        startPlayClock(fromT, toT, dir, samples.length / hz);
+      });
+      motorsOnTimeline = true;
     }
     var endpoint = editor.poseAt(mode === "rev" ? mot : fromT);
     if (!poseOffEndpoint(endpoint)) {
@@ -1363,7 +2087,7 @@
     seekAtMax(endpoint);
     editor.playhead = fromT;
     editor.draw();
-    if ($("tlTime")) $("tlTime").textContent = fromT.toFixed(2) + " s";
+    syncPlayheadReadout(fromT);
     preroll = { seeking: true, then: go };
     if (!mcBusy()) {
       preroll.seeking = false;
@@ -1398,6 +2122,7 @@
   }
 
   function sendJog(dir, ax, fast) {
+    motorsOnTimeline = false;
     ax = Number(ax) || 1;
     var swap = false;
     var n;
@@ -1430,7 +2155,7 @@
       sendMc("MS");
       return;
     }
-    if (name === "HOME") { sendMc("MH"); return; }
+    if (name === "HOME") { motorsOnTimeline = false; sendMc("MH"); return; }
     if (name === "MOVE_L" || name === "MOVE_L2") {
       if (run) sendJog(-1, axis, false);
       else sendMc("MS");
@@ -1774,18 +2499,14 @@
   function abcApplyMaxSession() {
     cmdSpd = spdMax;
     cmdAcc = accMax;
-    sendMc("SA " + accMax.toFixed(3));
+    cmdDec = accMax;
+    sendMc(saLine());
     sendMc("SS " + spdMax.toFixed(3));
     if (window.SWUi) {
       if (typeof SWUi.syncAccelUi === "function") SWUi.syncAccelUi(accMax);
       if (typeof SWUi.syncSpeedUi === "function") SWUi.syncSpeedUi(spdMax);
     }
-    Array.prototype.forEach.call(document.querySelectorAll(".js-ss-val"), function (n) {
-      n.textContent = fmt(cmdSpd);
-    });
-    Array.prototype.forEach.call(document.querySelectorAll(".js-sa-val"), function (n) {
-      n.textContent = fmt(cmdAcc);
-    });
+    syncSsSaUi();
   }
 
   function abcSet(k) {
@@ -1819,6 +2540,7 @@
     if (!pose) return;
     var line = markLine(pose);
     if (!line) return;
+    motorsOnTimeline = false;
     if (fast) abcApplyMaxSession();
     sendMc(line);
   }
@@ -1846,7 +2568,7 @@
     var t = editor.clampT(mk.t);
     editor.playhead = t;
     editor.draw();
-    if ($("tlTime")) $("tlTime").textContent = t.toFixed(2) + " s";
+    syncPlayheadReadout(t);
     syncCtrlReadouts();
     abcMoveToPose(editor.poseAt(t), fast);
   }
@@ -1891,9 +2613,7 @@
     cmdSpd = v;
     sendMc("SS " + v.toFixed(3));
     if (window.SWUi && typeof SWUi.syncSpeedUi === "function") SWUi.syncSpeedUi(v);
-    Array.prototype.forEach.call(document.querySelectorAll(".js-ss-val"), function (n) {
-      n.textContent = fmt(v);
-    });
+    paintSsSaReadouts();
     updateAbcEtas();
   }
 
@@ -2396,7 +3116,7 @@
     smSeeking = true;
     editor.playhead = t;
     editor.draw();
-    if ($("tlTime")) $("tlTime").textContent = t.toFixed(2) + " s";
+    syncPlayheadReadout(t);
     syncCtrlReadouts();
     if (seekMotors !== false && ((lastStatus && lastStatus.state) || "?") === "I") {
       var pose = editor.poseAt(t);
@@ -2763,8 +3483,22 @@
       el.oninput = function () { emitSs(false, el); };
       el.onchange = function () { emitSs(true, el); };
     });
-    Array.prototype.forEach.call((root || document).querySelectorAll(".js-acc"), function (el) {
+    Array.prototype.forEach.call((root || document).querySelectorAll(".js-acc, .js-dec"), function (el) {
       el.oninput = function () { emitSa(el); };
+    });
+    Array.prototype.forEach.call((root || document).querySelectorAll(".js-sa-sym"), function (el) {
+      el.checked = saSym;
+      el.onchange = function () {
+        saSym = !!el.checked;
+        Array.prototype.forEach.call(document.querySelectorAll(".js-sa-sym"), function (x) {
+          x.checked = saSym;
+        });
+        if (saSym) {
+          cmdDec = cmdAcc;
+          syncSsSaUi();
+          sendMc(saLine());
+        }
+      };
     });
   }
 
@@ -2844,6 +3578,7 @@
   }
 
   function emitMj(force) {
+    motorsOnTimeline = false;
     var ids = joyAxisIds();
     var line;
     if (!ids.length) line = "MJ 0";
@@ -3124,21 +3859,44 @@
   function kbSetPlayhead(t, seek) {
     if (!editor) return;
     t = editor.clampT(t);
-    editor.playhead = t;
-    editor.draw();
-    if ($("tlTime")) $("tlTime").textContent = t.toFixed(2) + " s";
-    if (seek) onPlayhead(t, true, true);
+    var oldT = editor.playhead;
+    if (!seek) {
+      editor.playhead = t;
+      editor.draw();
+      syncPlayheadReadout(t);
+      syncCtrlReadouts();
+      return;
+    }
+    seekPlayheadMotors(oldT, t, { ctrl: true });
   }
 
   function kbNudgePlayhead(dir, ev) {
     if (!editor) return;
-    var dt = ev.shiftKey ? 1 : 0.1;
+    var t;
+    if (ev.altKey) {
+      var fps = Number(project && project.frame_rate) || 30;
+      if (!(fps > 0)) fps = 30;
+      var frame = Math.round(editor.playhead * fps) + 1;
+      t = (frame - 1 + dir) / fps;
+    } else {
+      t = editor.playhead + dir * (ev.shiftKey ? 1 : 0.1);
+    }
+    kbSetPlayhead(t, !!ev.ctrlKey);
+  }
+
+  function kbStepSeconds(dir, ev) {
+    if (!editor) return;
+    var dt = ev.shiftKey ? 10 : 1;
     kbSetPlayhead(editor.playhead + dir * dt, !!ev.ctrlKey);
   }
 
   function kbJumpPlayhead(toEnd, seek) {
     if (!editor) return;
     kbSetPlayhead(toEnd ? editor.motionDuration() : 0, seek);
+  }
+
+  function kbSkipPathRepeat(ev) {
+    return !!(ev.repeat && ev.ctrlKey && editor && onCurveAt(editor.playhead));
   }
 
   function kbLetter(ev) {
@@ -3205,12 +3963,20 @@
     }
     if (code === "ArrowUp" || code === "ArrowDown") {
       ev.preventDefault();
+      if (kbSkipPathRepeat(ev)) return;
       kbNudgePlayhead(code === "ArrowUp" ? 1 : -1, ev);
       return;
     }
     if (code === "PageUp" || code === "PageDown") {
       ev.preventDefault();
-      kbJumpPlayhead(code === "PageUp", !!ev.ctrlKey);
+      if (kbSkipPathRepeat(ev)) return;
+      kbStepSeconds(code === "PageUp" ? 1 : -1, ev);
+      return;
+    }
+    if (code === "Home" || code === "End") {
+      ev.preventDefault();
+      if (kbSkipPathRepeat(ev)) return;
+      kbJumpPlayhead(code === "End", !!ev.ctrlKey);
       return;
     }
     if (code.indexOf("Digit") === 0 && !ev.ctrlKey && !ev.altKey && !ev.metaKey) {
@@ -3856,10 +4622,11 @@
     if ($("tlFit")) $("tlFit").onclick = function () { editor.fitY(); };
     if ($("tlFitX")) $("tlFitX").onclick = function () { editor.fitX(); };
     function jumpVisibleKey(dir, seek) {
+      var oldT = editor.playhead;
       if (!editor.jumpVisibleKey(dir)) return;
       var t = editor.playhead;
-      if ($("tlTime")) $("tlTime").textContent = t.toFixed(2) + " s";
-      if (seek) onPlayhead(t, true, true);
+      syncPlayheadReadout(t);
+      if (seek) seekPlayheadMotors(oldT, t);
     }
     function bindJumpKey(el, dir) {
       if (!el) return;
@@ -3888,7 +4655,7 @@
       $("tlToStart").onclick = function () {
         editor.playhead = 0;
         editor.draw();
-        if ($("tlTime")) $("tlTime").textContent = "0.00 s";
+        syncPlayheadReadout(0);
         seekAtMax(editor.poseAt(0));
       };
     }
@@ -3897,7 +4664,7 @@
         var t = editor.motionDuration();
         editor.playhead = t;
         editor.draw();
-        if ($("tlTime")) $("tlTime").textContent = t.toFixed(2) + " s";
+        syncPlayheadReadout(t);
         seekAtMax(editor.poseAt(t));
       };
     }
@@ -3910,6 +4677,7 @@
     }
     if ($("tlKeyT")) $("tlKeyT").onchange = commitTV;
     if ($("tlKeyV")) $("tlKeyV").onchange = commitTV;
+    bindPlayheadNumEdits();
     syncKeyTV();
     updateMaxTLabel();
     updatePlayEnabled();
@@ -3969,6 +4737,677 @@
     });
   }
 
+  var mcCfgGen = 0;
+  var mcCfgState = {
+    items: {},
+    orig: {},
+    sim: false,
+    tab: "common",
+    busy: false
+  };
+
+  var MC_CFG_COMMON_LABELS = {
+    name: "Name",
+    motors: "Motor count",
+    servos: "Servo count",
+    axis: "Axes",
+    unit_name: "Unit",
+    init_speed: "Speed",
+    speed: "Speed",
+    init_accel: "Accel",
+    accel: "Accel",
+    init_verbose: "Verbose",
+    verbose: "Verbose",
+    verbose_rate_hz: "Verbose Hz",
+    init_terminal: "Terminal",
+    terminal: "Terminal",
+    init_debug_level: "Debug",
+    debug_level: "Debug",
+    path_buffer_size: "Path buffer",
+    init_path_slice_us: "Path slice (µs)",
+    ramp_start_hz: "Ramp start (Hz)",
+    stop_approach_hz: "Stop approach (Hz)",
+    dir_change_pause_s: "Dir pause (s)",
+    BUZZER_use: "Buzzer",
+    WDT_use: "Watchdog"
+  };
+  var MC_CFG_COMMON_ORDER = [
+    "name", "motors", "servos", "axis", "unit_name",
+    "init_speed", "init_accel", "init_verbose", "verbose_rate_hz",
+    "init_terminal", "init_debug_level", "path_buffer_size", "init_path_slice_us",
+    "ramp_start_hz", "stop_approach_hz", "dir_change_pause_s",
+    "BUZZER_use", "WDT_use"
+  ];
+  var MC_CFG_MOTOR_ORDER = [
+    "min", "max", "max_speed", "max_accel", "steps_per_unit",
+    "home_mode", "home_move_out", "home_speed", "home_accel",
+    "drv_step_active", "drv_dir_active", "drv_en_active", "drv_error_active",
+    "limit_l_use", "limit_l_active", "limit_r_use", "limit_r_active"
+  ];
+  var MC_CFG_SERVO_ORDER = [
+    "min", "max", "max_speed", "max_accel",
+    "min_pulse", "max_pulse", "pwm_active", "swap"
+  ];
+  var MC_CFG_AXIS_ORDER = [
+    "name", "unit_name", "min", "max", "max_speed", "max_accel", "steps_per_unit"
+  ];
+  var MC_CFG_MOTOR_STEM = {
+    min: { family: "min", label: "Min" },
+    max: { family: "max", label: "Max" },
+    max_speed: { family: "max_speed", label: "Max speed" },
+    max_accel: { family: "max_accel", label: "Max accel" },
+    steps_per_unit: { family: "steps_per_unit", label: "Steps/unit" },
+    steps_per_mm: { family: "steps_per_unit", label: "Steps/unit", prio: 1 },
+    home_mode: { family: "home_mode", label: "Home mode" },
+    home_move_out: { family: "home_move_out", label: "Home out" },
+    home_speed: { family: "home_speed", label: "Home speed" },
+    home_accel: { family: "home_accel", label: "Home accel" },
+    drv_step_active: { family: "drv_step_active", label: "Step active" },
+    drv_dir_active: { family: "drv_dir_active", label: "Dir active" },
+    drv_en_active: { family: "drv_en_active", label: "Enable active" },
+    drv_enable_active: { family: "drv_en_active", label: "Enable active" },
+    drv_error_active: { family: "drv_error_active", label: "Error active" }
+  };
+  var MC_CFG_SERVO_STEM = {
+    min: { family: "min", label: "Min" },
+    max: { family: "max", label: "Max" },
+    max_speed: { family: "max_speed", label: "Max speed" },
+    max_accel: { family: "max_accel", label: "Max accel" },
+    min_pulse: { family: "min_pulse", label: "Min pulse (µs)" },
+    max_pulse: { family: "max_pulse", label: "Max pulse (µs)" },
+    active: { family: "pwm_active", label: "PWM active" },
+    swap: { family: "swap", label: "Swap" }
+  };
+
+  function mcCfgInt(v, dflt) {
+    var n = parseInt(v, 10);
+    return isFinite(n) ? n : dflt;
+  }
+
+  function mcCfgMotors(items) {
+    var n = mcCfgInt(items && items.motors, 1);
+    if (n < 1) n = 1;
+    if (n > 3) n = 3;
+    return n;
+  }
+
+  function mcCfgServos(items) {
+    var n = mcCfgInt(items && items.servos, 0);
+    if (n < 0) n = 0;
+    if (n > 3) n = 3;
+    return n;
+  }
+
+  function mcCfgPretty(stem) {
+    return String(stem || "").replace(/_/g, " ");
+  }
+
+  function mcCfgLastDigit(name) {
+    var m = String(name).match(/(\d)(?!.*\d)/);
+    return m ? parseInt(m[1], 10) : null;
+  }
+
+  function mcCfgClassify(key) {
+    var name = String(key);
+    var low = name.toLowerCase();
+    if (low === "axis_count") return { hide: true };
+    if (low.indexOf("slider_") === 0) return { hide: true };
+    if (/^(max_speed|max_accel)$/i.test(name)) return { hide: true };
+    if (/^(AXIS_[1-6]_.+|axis_min_[1-6]|axis_max_[1-6]|max_speed_[1-6]|max_accel_[1-6]|steps_per_unit_[1-6]|steps_per_mm_[1-6]|soft_min_[1-6]|soft_max_[1-6]|name_[1-6]|unit_name_[1-6])$/i.test(name)) {
+      return { hide: true };
+    }
+
+    var m = name.match(/^EXT_([0-4])_(.+)$/i);
+    if (m) {
+      return {
+        tab: "common", col: 0, family: "ext_" + m[1] + "_" + m[2].toLowerCase(),
+        label: "Ext " + m[1] + " " + mcCfgPretty(m[2].toLowerCase()),
+        prio: 0, leftover: false, readonly: false, key: name
+      };
+    }
+
+    m = name.match(/^MOTOR_([1-3])_(.+)$/i);
+    if (m) {
+      var rest = m[2].toLowerCase();
+      var mm = MC_CFG_MOTOR_STEM[rest] || {
+        family: "motor_" + rest, label: mcCfgPretty(rest), leftover: true
+      };
+      return {
+        tab: "motors", col: +m[1], family: mm.family, label: mm.label,
+        prio: mm.prio || 0, leftover: !!mm.leftover, readonly: false, key: name
+      };
+    }
+
+    m = name.match(/^SERVO_([1-3])_(.+)$/i);
+    if (m) {
+      rest = m[2].toLowerCase();
+      var sm = MC_CFG_SERVO_STEM[rest] || {
+        family: "servo_" + rest, label: mcCfgPretty(rest), leftover: true
+      };
+      return {
+        tab: "servos", col: +m[1], family: sm.family, label: sm.label,
+        prio: sm.prio || 0, leftover: !!sm.leftover, readonly: false, key: name
+      };
+    }
+
+    m = name.match(/^home_(mode|move_out|speed|accel)_([1-3])$/i);
+    if (m) {
+      var homeLab = { mode: "Home mode", move_out: "Home out", speed: "Home speed", accel: "Home accel" };
+      return {
+        tab: "motors", col: +m[2], family: "home_" + m[1].toLowerCase(),
+        label: homeLab[m[1].toLowerCase()] || ("Home " + m[1]),
+        prio: 0, leftover: false, readonly: false, key: name
+      };
+    }
+
+    if (/^DRV_ENABLE_active$/i.test(name) || /^DRV_EN_active$/i.test(name)) {
+      return {
+        tab: "motors", col: 1, family: "drv_en_active", label: "Enable active",
+        prio: 1, leftover: false, readonly: false, key: name
+      };
+    }
+
+    m = name.match(/^DRV_(STEP|DIR|EN|ENABLE|ERROR)_([1-3])_active$/i);
+    if (m) {
+      var drvKind = m[1].toUpperCase();
+      if (drvKind === "ENABLE") drvKind = "EN";
+      var drvLab = { STEP: "Step active", DIR: "Dir active", EN: "Enable active", ERROR: "Error active" };
+      return {
+        tab: "motors", col: +m[2], family: "drv_" + drvKind.toLowerCase() + "_active",
+        label: drvLab[drvKind] || (m[1] + " active"),
+        prio: 0, leftover: false, readonly: false, key: name
+      };
+    }
+
+    m = name.match(/^SW_LIMIT_([LR])_([1-3])_(use|active)$/i);
+    if (m) {
+      var side = m[1].toUpperCase();
+      var kind = m[3].toLowerCase();
+      return {
+        tab: "motors", col: +m[2],
+        family: "limit_" + side.toLowerCase() + "_" + kind,
+        label: "Limit " + side + (kind === "use" ? "" : " active"),
+        prio: 0, leftover: false, readonly: false, key: name
+      };
+    }
+
+    var aliases = {
+      speed: "init_speed", accel: "init_accel", verbose: "init_verbose",
+      terminal: "init_terminal", debug_level: "init_debug_level"
+    };
+    if (aliases[low]) {
+      return {
+        tab: "common", col: 0, family: aliases[low],
+        label: MC_CFG_COMMON_LABELS[aliases[low]] || aliases[low],
+        prio: 1, leftover: false, readonly: false, key: name
+      };
+    }
+
+    if (MC_CFG_COMMON_LABELS[name] || MC_CFG_COMMON_LABELS[low]) {
+      return {
+        tab: "common", col: 0, family: low === "axis" ? "axis" : (MC_CFG_COMMON_LABELS[name] ? name : low),
+        label: MC_CFG_COMMON_LABELS[name] || MC_CFG_COMMON_LABELS[low],
+        prio: 0, leftover: false, readonly: low === "axis", key: name
+      };
+    }
+
+    var dig = mcCfgLastDigit(name);
+    var stem = name.replace(/[_\-]?[1-6](?!.*[1-6])/, "").replace(/_+$/, "");
+    if (!stem) stem = name;
+    if (dig >= 1 && dig <= 3) {
+      return {
+        tab: "motors", col: dig, family: "x_" + stem.toLowerCase(),
+        label: mcCfgPretty(stem), prio: 0, leftover: true, readonly: false, key: name
+      };
+    }
+    if (dig >= 4 && dig <= 6) {
+      return {
+        tab: "servos", col: dig - 3, family: "x_" + stem.toLowerCase(),
+        label: mcCfgPretty(stem), prio: 0, leftover: true, readonly: false, key: name
+      };
+    }
+    return {
+      tab: "common", col: 0, family: "x_" + low,
+      label: mcCfgPretty(name), prio: 0, leftover: true, readonly: false, key: name
+    };
+  }
+
+  function mcCfgOrderIndex(tab, family, leftover) {
+    var list = MC_CFG_COMMON_ORDER;
+    if (tab === "motors") list = MC_CFG_MOTOR_ORDER;
+    else if (tab === "servos") list = MC_CFG_SERVO_ORDER;
+    else if (tab === "axis") list = MC_CFG_AXIS_ORDER;
+    if (leftover) return 1000;
+    var i = list.indexOf(family);
+    return i < 0 ? 500 : i;
+  }
+
+  function mcCfgLookup(items, name) {
+    if (!items || name == null) return null;
+    if (Object.prototype.hasOwnProperty.call(items, name) && items[name] != null) {
+      return { key: name, value: String(items[name]) };
+    }
+    var low = String(name).toLowerCase();
+    var keys = Object.keys(items);
+    var i = 0;
+    while (i < keys.length) {
+      if (String(keys[i]).toLowerCase() === low && items[keys[i]] != null) {
+        return { key: keys[i], value: String(items[keys[i]]) };
+      }
+      i += 1;
+    }
+    return null;
+  }
+
+  function mcCfgPutCell(groups, tab, family, label, col, hit, leftover, prio, readonly) {
+    if (!hit) return;
+    var g = groups[tab];
+    if (!g) return;
+    var row = g[family];
+    var maxCol = tab === "common" ? 0 : (tab === "axis" ? 6 : 3);
+    if (!row) {
+      row = {
+        family: family,
+        label: label,
+        leftover: !!leftover,
+        cells: tab === "common" ? [null] : new Array(maxCol + 1)
+      };
+      g[family] = row;
+    }
+    var idx = tab === "common" ? 0 : col;
+    var cell = {
+      key: hit.key,
+      value: hit.value == null ? "" : String(hit.value),
+      readonly: !!readonly,
+      title: hit.key,
+      prio: prio == null ? 0 : prio
+    };
+    var prev = row.cells[idx];
+    if (!prev || cell.prio < prev.prio) row.cells[idx] = cell;
+    if (leftover) row.leftover = true;
+  }
+
+  function mcCfgPackedAlias(n, field) {
+    if (field === "min") return "axis_min_" + n;
+    if (field === "max") return "axis_max_" + n;
+    return field + "_" + n;
+  }
+
+  function mcCfgFirstHit(items, names) {
+    var p = 0;
+    while (p < names.length) {
+      var hit = mcCfgLookup(items, names[p]);
+      if (hit) return { hit: hit, prio: p };
+      p += 1;
+    }
+    return { hit: { key: "", value: "" }, prio: 99 };
+  }
+
+  function mcCfgBuildAxisRows(items, motors, servos) {
+    var fields = [
+      { family: "name", label: "Name" },
+      { family: "unit_name", label: "Unit" },
+      { family: "min", label: "Min" },
+      { family: "max", label: "Max" },
+      { family: "max_speed", label: "Max speed" },
+      { family: "max_accel", label: "Max accel" },
+      { family: "steps_per_unit", label: "Steps/unit" }
+    ];
+    var groups = { axis: {} };
+    fields.forEach(function (f) {
+      var i = 1;
+      while (i <= 3) {
+        var motorNames = [
+          "AXIS_" + i + "_" + f.family,
+          "MOTOR_" + i + "_" + f.family,
+          mcCfgPackedAlias(i, f.family)
+        ];
+        var mh = mcCfgFirstHit(items, motorNames);
+        mcCfgPutCell(groups, "axis", f.family, f.label, i, mh.hit, false, mh.prio, true);
+        var packed = motors + i;
+        var servoNames = [
+          "AXIS_" + (3 + i) + "_" + f.family,
+          "SERVO_" + i + "_" + f.family
+        ];
+        if (packed !== (3 + i) && packed >= 1 && packed <= 6) {
+          servoNames.push("AXIS_" + packed + "_" + f.family);
+          servoNames.push(mcCfgPackedAlias(packed, f.family));
+        }
+        var sh = mcCfgFirstHit(items, servoNames);
+        mcCfgPutCell(groups, "axis", f.family, f.label, 3 + i, sh.hit, false, sh.prio, true);
+        i += 1;
+      }
+    });
+    var rows = Object.keys(groups.axis).map(function (fam) { return groups.axis[fam]; });
+    rows.sort(function (a, b) {
+      var oa = mcCfgOrderIndex("axis", a.family, a.leftover);
+      var ob = mcCfgOrderIndex("axis", b.family, b.leftover);
+      if (oa !== ob) return oa - ob;
+      return String(a.label).localeCompare(String(b.label));
+    });
+    return { rows: rows, cols: 6 };
+  }
+
+  function mcCfgBuildModel(items) {
+    items = items || {};
+    var motors = mcCfgMotors(items);
+    var servos = mcCfgServos(items);
+    var groups = { common: {}, motors: {}, servos: {} };
+    Object.keys(items).forEach(function (key) {
+      var info = mcCfgClassify(key);
+      if (!info || info.hide) return;
+      var hit = { key: info.key, value: items[key] == null ? "" : String(items[key]) };
+      mcCfgPutCell(
+        groups, info.tab, info.family, info.label, info.col, hit,
+        info.leftover, info.prio, info.readonly
+      );
+    });
+    var packedFb = [
+      { family: "max_speed", label: "Max speed", prefix: "max_speed_" },
+      { family: "max_accel", label: "Max accel", prefix: "max_accel_" },
+      { family: "steps_per_unit", label: "Steps/unit", prefix: "steps_per_unit_" }
+    ];
+    var mi = 1;
+    while (mi <= motors) {
+      packedFb.forEach(function (fb) {
+        var row = groups.motors[fb.family];
+        if (row && row.cells[mi]) return;
+        var hit = mcCfgLookup(items, fb.prefix + mi);
+        if (hit) mcCfgPutCell(groups, "motors", fb.family, fb.label, mi, hit, false, 2, false);
+      });
+      mi += 1;
+    }
+    function rowsOf(tab) {
+      var g = groups[tab];
+      var rows = Object.keys(g).map(function (fam) { return g[fam]; });
+      rows.sort(function (a, b) {
+        var oa = mcCfgOrderIndex(tab, a.family, a.leftover);
+        var ob = mcCfgOrderIndex(tab, b.family, b.leftover);
+        if (oa !== ob) return oa - ob;
+        return String(a.label).localeCompare(String(b.label));
+      });
+      return rows;
+    }
+    function colCount(tab, rows, live, cap) {
+      if (tab === "common") return 1;
+      var n = live;
+      rows.forEach(function (row) {
+        var c = 1;
+        while (c <= cap) {
+          if (row.cells[c]) n = Math.max(n, c);
+          c += 1;
+        }
+      });
+      if (n < 1) n = 1;
+      if (n > cap) n = cap;
+      return n;
+    }
+    var commonRows = rowsOf("common");
+    var motorRows = rowsOf("motors");
+    var servoRows = rowsOf("servos");
+    return {
+      common: { rows: commonRows, cols: 1 },
+      motors: { rows: motorRows, cols: colCount("motors", motorRows, motors, 3) },
+      servos: { rows: servoRows, cols: colCount("servos", servoRows, servos, 3) },
+      axis: mcCfgBuildAxisRows(items, motors, servos)
+    };
+  }
+
+  function mcCfgStatus(msg, isErr) {
+    var el = $("mcCfgStatus");
+    if (!el) return;
+    el.textContent = msg || "";
+    el.classList.toggle("err", !!isErr && !!msg);
+  }
+
+  function mcCfgSetBusy(on) {
+    mcCfgState.busy = !!on;
+    var btn = $("mcCfgSet");
+    if (btn) btn.disabled = !!on || !!mcCfgState.sim || mcCfgState.tab === "axis";
+  }
+
+  function mcCfgDirty() {
+    var body = $("mcCfgBody");
+    var dirty = {};
+    if (!body) return dirty;
+    Array.prototype.forEach.call(body.querySelectorAll("input[data-key]"), function (inp) {
+      if (inp.disabled || inp.readOnly) return;
+      var key = inp.getAttribute("data-key");
+      if (!key) return;
+      var now = inp.value;
+      var was = mcCfgState.orig[key];
+      if (was == null) was = "";
+      if (now !== String(was)) dirty[key] = now;
+    });
+    return dirty;
+  }
+
+  function mcCfgRender() {
+    var tabsEl = $("mcCfgTabs");
+    var body = $("mcCfgBody");
+    if (!tabsEl || !body) return;
+    var model = mcCfgBuildModel(mcCfgState.items);
+    var names = [
+      { id: "common", title: "Common" },
+      { id: "motors", title: "Motors" },
+      { id: "servos", title: "Servos" },
+      { id: "axis", title: "Axis" }
+    ];
+    var visible = names.slice();
+    var tab = mcCfgState.tab;
+    if (!visible.some(function (t) { return t.id === tab; })) tab = visible[0].id;
+    mcCfgState.tab = tab;
+    tabsEl.innerHTML = "";
+    visible.forEach(function (t) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.textContent = t.title;
+      b.className = t.id === tab ? "on" : "";
+      b.setAttribute("data-tab", t.id);
+      b.onclick = function () {
+        mcCfgState.tab = t.id;
+        mcCfgRender();
+      };
+      tabsEl.appendChild(b);
+    });
+    var pane = model[tab] || { rows: [], cols: 1 };
+    var cols = pane.cols || 1;
+    if (tab === "axis") cols = 6;
+    body.innerHTML = "";
+    var grid = document.createElement("div");
+    grid.className = "mc-cfg-grid cols-" + cols + (tab === "axis" ? " axis-grid" : "");
+    if (tab === "axis") {
+      grid.appendChild(document.createElement("div"));
+      var hm = document.createElement("div");
+      hm.className = "mc-cfg-head mc-cfg-head-span";
+      hm.textContent = "Motors";
+      grid.appendChild(hm);
+      var hs = document.createElement("div");
+      hs.className = "mc-cfg-head mc-cfg-head-span";
+      hs.textContent = "Servos";
+      grid.appendChild(hs);
+      grid.appendChild(document.createElement("div"));
+      var c = 1;
+      while (c <= 6) {
+        var h = document.createElement("div");
+        h.className = "mc-cfg-head";
+        h.textContent = String(((c - 1) % 3) + 1);
+        grid.appendChild(h);
+        c += 1;
+      }
+    } else if (tab !== "common") {
+      var lab = document.createElement("div");
+      grid.appendChild(lab);
+      var n = 1;
+      while (n <= cols) {
+        var hh = document.createElement("div");
+        hh.className = "mc-cfg-head";
+        hh.textContent = String(n);
+        grid.appendChild(hh);
+        n += 1;
+      }
+    }
+    pane.rows.forEach(function (row) {
+      var nameEl = document.createElement("div");
+      nameEl.className = "mc-cfg-lab" + (row.leftover ? " leftover" : "");
+      nameEl.textContent = row.label;
+      grid.appendChild(nameEl);
+      if (tab === "common") {
+        mcCfgAppendInput(grid, row.cells[0], false);
+      } else {
+        var i = 1;
+        while (i <= cols) {
+          mcCfgAppendInput(grid, row.cells[i], tab === "axis");
+          i += 1;
+        }
+      }
+    });
+    body.appendChild(grid);
+    var setBtn = $("mcCfgSet");
+    if (setBtn) {
+      setBtn.hidden = tab === "axis";
+      setBtn.disabled = !!mcCfgState.sim || !!mcCfgState.busy || tab === "axis";
+    }
+    if (tab === "axis") {
+      if (!mcCfgState.sim) mcCfgStatus("motors 1–3, servos 1–3 — read only", false);
+    } else {
+      var st = $("mcCfgStatus");
+      if (st && /read only$/.test(st.textContent || "")) mcCfgStatus("", false);
+    }
+  }
+
+  function mcCfgAppendInput(grid, cell, forceBox) {
+    if (!cell || !cell.key) {
+      if (!forceBox) {
+        grid.appendChild(document.createElement("div"));
+        return;
+      }
+      var empty = document.createElement("input");
+      empty.type = "text";
+      empty.value = cell && cell.value ? cell.value : "";
+      empty.disabled = true;
+      empty.readOnly = true;
+      grid.appendChild(empty);
+      return;
+    }
+    var inp = document.createElement("input");
+    inp.type = "text";
+    inp.value = cell.value;
+    inp.setAttribute("data-key", cell.key);
+    inp.title = cell.title || cell.key;
+    inp.disabled = !!mcCfgState.sim;
+    inp.readOnly = !!cell.readonly || mcCfgState.tab === "axis";
+    inp.onkeydown = function (ev) {
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        if (!inp.readOnly && !inp.disabled) mcCfgDoSet();
+      }
+    };
+    grid.appendChild(inp);
+  }
+
+  function mcCfgLoad(keepTab) {
+    var gen = ++mcCfgGen;
+    mcCfgStatus("Reading…", false);
+    return fetch("/api/mc_config").then(function (r) { return r.json(); }).then(function (o) {
+      if (gen !== mcCfgGen) return;
+      o = o || {};
+      mcCfgState.items = o.items || {};
+      mcCfgState.orig = {};
+      Object.keys(mcCfgState.items).forEach(function (k) {
+        mcCfgState.orig[k] = String(mcCfgState.items[k]);
+      });
+      mcCfgState.sim = !!o.sim;
+      if (!keepTab) mcCfgState.tab = "common";
+      mcCfgRender();
+      if (o.error) mcCfgStatus(o.error, true);
+      else if (mcCfgState.sim) mcCfgStatus("mock is not configurable", false);
+      else if (mcCfgState.tab === "axis") mcCfgStatus("motors 1–3, servos 1–3 — read only", false);
+      else mcCfgStatus("", false);
+    }).catch(function (err) {
+      if (gen !== mcCfgGen) return;
+      mcCfgStatus((err && err.message) || "read failed", true);
+    });
+  }
+
+  function mcCfgRefreshHello() {
+    return fetch("/api/hello").then(function (r) { return r.json(); }).then(function (h) {
+      if (h && h.t === "hello") applyHello(h);
+      else if (h) applyHello(h);
+    }).catch(function () {});
+  }
+
+  function mcCfgDoSet() {
+    if (mcCfgState.busy || mcCfgState.sim || mcCfgState.tab === "axis") return;
+    var dirty = mcCfgDirty();
+    var keys = Object.keys(dirty);
+    if (!keys.length) {
+      mcCfgStatus("no changes", false);
+      return;
+    }
+    mcCfgSetBusy(true);
+    mcCfgStatus("Setting…", false);
+    fetch("/api/mc_config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ items: dirty })
+    }).then(function (r) { return r.json(); }).then(function (res) {
+      mcCfgSetBusy(false);
+      res = res || {};
+      var errors = res.errors || [];
+      var failed = {};
+      errors.forEach(function (e) {
+        if (e && e.key) failed[e.key] = e.error || "cfg";
+      });
+      var okN = 0;
+      keys.forEach(function (k) {
+        if (!failed[k]) {
+          mcCfgState.orig[k] = dirty[k];
+          mcCfgState.items[k] = dirty[k];
+          okN += 1;
+        }
+      });
+      var bits = [];
+      if (okN) bits.push("set " + okN);
+      errors.forEach(function (e) {
+        bits.push("failed " + (e.key || "") + ": " + (e.error || "cfg"));
+      });
+      if (res.error && !errors.length) bits.push(res.error);
+      var msg = bits.join(", ");
+      mcCfgStatus(msg, !res.ok && (!!res.error || !!errors.length));
+      var countsChanged = (dirty.motors != null && !failed.motors) || (dirty.servos != null && !failed.servos);
+      if (countsChanged) mcCfgLoad(true);
+    }).catch(function (err) {
+      mcCfgSetBusy(false);
+      mcCfgStatus((err && err.message) || "set failed", true);
+    });
+  }
+
+  function openMcConfig() {
+    var dlg = $("mcConfigDlg");
+    if (!dlg || typeof dlg.showModal !== "function") return;
+    if (!dlg.open) dlg.showModal();
+    mcCfgLoad(false);
+  }
+
+  function bindMcConfig() {
+    var dlg = $("mcConfigDlg");
+    if ($("btnMcConfig")) $("btnMcConfig").onclick = openMcConfig;
+    if ($("phoneOpenMcConfig")) $("phoneOpenMcConfig").onclick = openMcConfig;
+    if ($("mcCfgClose")) {
+      $("mcCfgClose").onclick = function () {
+        if (dlg && dlg.open) dlg.close();
+      };
+    }
+    if ($("mcCfgSet")) $("mcCfgSet").onclick = function () { mcCfgDoSet(); };
+    if (dlg) {
+      dlg.addEventListener("close", function () {
+        mcCfgGen += 1;
+        mcCfgRefreshHello();
+      });
+    }
+  }
+
   function fillConfig() {
     if ($("cfgFps")) $("cfgFps").value = project.frame_rate || 30;
     if ($("cfgMarks")) $("cfgMarks").value = String(markCount());
@@ -3990,11 +5429,14 @@
   }
 
   function init() {
+    bindSerialUi();
+    bindMcConfig();
     $("btnConfig").onclick = function () { $("configDlg").showModal(); };
     $("cfgFps").onchange = function () {
       project.frame_rate = Number($("cfgFps").value) || 30;
       SHProject.saveProject(project);
       smOnFpsChange();
+      syncPlayheadReadout(editor ? editor.playhead : 0);
     };
     if ($("cfgMarks")) {
       $("cfgMarks").onchange = function () {

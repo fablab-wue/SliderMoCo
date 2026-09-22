@@ -17,7 +17,7 @@ Both speak the same UART text protocol at **115200 8N1**. Only **one** SliderMC 
 | --- | --- | --- |
 | This repo | Yes | Yes (to pack files) |
 | CPython 3 | Yes | On the build PC only |
-| `pyserial` | Only if you pass `--port` | No |
+| `pyserial` | For the COM dialog or `--port` | No |
 | SliderMC + motors + PSU | For real motion | For real motion |
 | USB cable to SliderMC | Yes (`COMx` / `/dev/tty…`) | Optional (debug) |
 | Pico W / Pico 2 W or ESP32 + USB | No | Yes |
@@ -73,14 +73,18 @@ Verbose mock status is one `#` line with `|` groups, same shape as SliderMC (`#I
 ### Real SliderMC on USB
 
 ```text
-python -m server.host --port COM5
+python -m server.host
 ```
+
+On a wide window the topbar **port** button (next to SliderMoCo) opens a dialog: pick a listed COM / tty, type one, or **Mock**. Omit `--port` and that dialog is the way in — the process does not start mock by itself. **Cancel** or **Mock** binds mock so the UI still runs.
+
+`--port COM5` still links at process start (scripts / CI). You can switch sliders later from the same dialog without restarting the host. Last successful port is remembered in `data/last_serial.json` as a prefill only.
 
 Linux / macOS: `--port /dev/ttyUSB0` or `/dev/ttyACM0`.
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `--port` | *(empty)* | Serial device. Omit = mock. |
+| `--port` | *(empty)* | Serial device. Omit = pick in the desktop COM dialog (mock if you cancel). |
 | `--baud` | `115200` | Must match SliderMC. |
 | `--http-port` | `8080` | Browser port. Port 80 in config is forced to 8080 on this host. |
 | `--banner` | `5` | Seconds to wait for `# MC V1 -` plus `VP:1`. Timeout → **UNLINKED** (no silent mock). |
@@ -89,7 +93,7 @@ Linux / macOS: `--port /dev/ttyUSB0` or `/dev/ttyACM0`.
 | `--mock-on-fail` | off | Use MockMC if identity fails. |
 | `--axes` | `3` | Mock packed axis count only (clamped 1–6; 3 motors + remaining servos). Ignored when serial links. |
 
-If `pyserial` is missing and you passed `--port`, the process exits (`pip install pyserial`).
+If `pyserial` is missing, the COM dialog cannot open a port (`pip install pyserial`). `--port` at process start still exits if pyserial is missing.
 
 The host can store JSON under `data/rigs/` and `data/projects/` (`/api/rigs`, `/api/projects`). The current browser UI **does not call those endpoints** — Config Save/Load is `localStorage` plus a downloaded file.
 
@@ -103,7 +107,7 @@ python tests/test_timeline.py
 
 1. SliderMC powered and showing its usual boot banner on a serial terminal at 115200.
 2. Close that terminal — only one program owns the port.
-3. Start the host with `--port`.
+3. Start the host (`--port` or the COM dialog).
 4. Browser Info rows should populate; OLED should not stay empty if the MC sends lines.
 5. ENABLE on, small MOVE, confirm direction. Use **SWAP DIR** on the phone Home tab if the rail is backwards (desktop swap is the same SWUi flags once you use phone or a future control).
 
@@ -247,7 +251,7 @@ USB CDC echo (`SW_MC_USB_ECHO`): the Pico prints `MC> …` for forwarded lines. 
 
 Timelapse tasks pulse `PIN_CAMERA_CTRL` **low** (open-collector) for **Exposure time** and send `CT` with the same duration in milliseconds. The **PC host has no GPIO** — `CT` still reaches SliderMC when the host is on UART.
 
-Wire: GPIO → opto / remote shutter that expects a closed contact (active-low), same as SliderMC. Exposure **time** in the Timelapse panel **is** the pulse width.
+Wire: GPIO → opto / remote shutter that expects a closed contact (active-low), same as SliderMC. Exposure **time** in the Timelapse dialog **is** the pulse width.
 
 See [Timelapse](timelapse-panel-manual.md).
 

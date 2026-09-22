@@ -1,8 +1,10 @@
-# Timelapse panel
+# Timelapse
 
-The Timelapse panel runs an **interval shoot as a server task**. The host (Pico or PC) owns the loop. You can lock the phone; the watchdog will **not** abort the task.
+Timelapse runs an **interval shoot as a server task**. The host (Pico or PC) owns the loop. You can lock the phone; the watchdog will **not** abort the task.
 
 This is not Timeline **Play**. Play is a Motion Path sampled from F-curves and dies if the browser tab sleeps.
+
+On a **wide layout**, open it from Control **Timelapse …** (float `#winTl`). There is no docked Timelapse panel.
 
 ---
 
@@ -10,7 +12,7 @@ This is not Timeline **Play**. Play is a Motion Path sampled from F-curves and d
 
 | Layout | Motion | Start |
 | --- | --- | --- |
-| **Desktop** (wide) | Timeline F-curves from **t = 0** to the motion end | **⏲ Start** on the Timelapse float / docked panel |
+| **Desktop** (wide) | Timeline F-curves from **t = 0** to the motion end | **⏲ Start** on the Timelapse float |
 | **Phone** (≤800 px) | Axis-1 crawl toward an **A/B mark** (`sw_marks`) | **⏲A** … **⏲H** — unchanged |
 
 Both layouts share **Timelapse FACTOR**, **Exposure time**, and the **MSM** switch.
@@ -19,12 +21,11 @@ Both layouts share **Timelapse FACTOR**, **Exposure time**, and the **MSM** swit
 
 ## Desktop (timeline)
 
-1. Red **⏹** on the docked panel — cancels the task (MC lines that start with `M` cancel a running task). The float dialog uses the same STOP as the rest of the UI.
-2. **⏲ Start** — preroll to the pose at t = 0, upload the Timeline as a path sampled at **Config → Frame rate**, then start a host task. No `path.go` (the task owns play).
-3. ETA **s** — `timeline duration × FACTOR` (wall-clock length of the shoot).
-4. **Timelapse FACTOR** (integer 3–1000, default 10).
-5. **Exposure time** (0.1–30 s, default 0.1) — shutter pulse width (GPIO and `CT`).
-6. **MSM** switch. Saved in `localStorage` (`1` / `0`).
+1. **⏲ Start** — preroll to the pose at t = 0, upload the Timeline as a path sampled at **Config → Frame rate**, then start a host task. No `path.go` (the task owns play). The rest of the UI Stop cancels the task (MC lines that start with `M` cancel a running task).
+2. ETA **s** — `timeline duration × FACTOR` (wall-clock length of the shoot).
+3. **Timelapse FACTOR** (integer 3–1000, default 10).
+4. **Exposure time** (0.1–30 s, default 0.1) — shutter pulse width (GPIO and `CT`).
+5. **MSM** switch. Saved in `localStorage` (`1` / `0`).
 
 | MSM | Task | Motion |
 | --- | --- | --- |
@@ -94,7 +95,7 @@ Starting a task **replaces** any previous task. One task at a time.
 
 **⏹** stops motion and cancels the task.
 
-Because the loop is a `{"task":…}` on the host, missing `{"wdt":"alive"}` (phone sleep, laptop lid) does **not** `MS` the cart mid-shoot. That protection is the reason this panel exists.
+Because the loop is a `{"task":…}` on the host, missing `{"wdt":"alive"}` (phone sleep, laptop lid) does **not** `MS` the cart mid-shoot. That protection is the reason this dialog exists.
 
 Do not confuse that with Timeline Play — keep the desktop tab awake for F-curve playback. Desktop **⏲ Start** is a task, so it survives tab sleep after the path has been uploaded.
 

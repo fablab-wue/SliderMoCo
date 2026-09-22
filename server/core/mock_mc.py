@@ -143,13 +143,24 @@ class MockMC:
             cfg["axis_max_%d" % (i + 1)] = hi
             cfg["soft_min_%d" % (i + 1)] = lo
             cfg["soft_max_%d" % (i + 1)] = hi
+            cfg["AXIS_%d_name" % (i + 1)] = meta[0]
+            cfg["AXIS_%d_unit_name" % (i + 1)] = meta[1]
+            cfg["AXIS_%d_min" % (i + 1)] = lo
+            cfg["AXIS_%d_max" % (i + 1)] = hi
+            cfg["AXIS_%d_max_speed" % (i + 1)] = meta[4]
+            cfg["AXIS_%d_max_accel" % (i + 1)] = meta[5]
             if i < self._motors:
                 cfg["MOTOR_%d_min" % (i + 1)] = lo
                 cfg["MOTOR_%d_max" % (i + 1)] = hi
+                cfg["MOTOR_%d_max_speed" % (i + 1)] = meta[4]
+                cfg["MOTOR_%d_max_accel" % (i + 1)] = meta[5]
+                cfg["MOTOR_%d_steps_per_unit" % (i + 1)] = 320
             else:
                 s = i - self._motors + 1
                 cfg["SERVO_%d_min" % s] = lo
                 cfg["SERVO_%d_max" % s] = hi
+                cfg["SERVO_%d_max_speed" % s] = meta[4]
+                cfg["SERVO_%d_max_accel" % s] = meta[5]
             i += 1
         cfg["slider_min"] = self._smin[0]
         cfg["slider_max"] = self._smax[0]
@@ -164,6 +175,7 @@ class MockMC:
         self.unit_name = _AXIS_META[0][1]
         self._speed_mm_s = 40.0
         self._accel_mm_s2 = 100.0
+        self._decel_mm_s2 = 100.0
         self._enabled = True
         self._state = "I"
         self.last_status_line = ""
@@ -266,8 +278,12 @@ class MockMC:
     def setSpeed(self, v):
         self._speed_mm_s = abs(_f(v, 40.0))
 
-    def setAcceleration(self, v):
+    def setAcceleration(self, v, d=None):
         self._accel_mm_s2 = abs(_f(v, 100.0))
+        if d is None:
+            self._decel_mm_s2 = self._accel_mm_s2
+        else:
+            self._decel_mm_s2 = abs(_f(d, self._accel_mm_s2))
 
     def stop(self):
         self._path_on = False
@@ -353,7 +369,7 @@ class MockMC:
         if cmd == "GS":
             return str(self._speed_mm_s)
         if cmd == "GA":
-            return str(self._accel_mm_s2)
+            return "%s %s" % (self._accel_mm_s2, getattr(self, "_decel_mm_s2", self._accel_mm_s2))
         if cmd == "VP":
             return "1"
         if cmd == "IA":
@@ -435,7 +451,7 @@ class MockMC:
                 self.setSpeed(args[0])
         elif cmd == "SA":
             if args:
-                self.setAcceleration(args[0])
+                self.setAcceleration(args[0], args[1] if len(args) > 1 else None)
         elif cmd == "MS":
             self.stop()
         elif cmd in ("H", "HT", "HALT", "ME"):

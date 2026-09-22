@@ -2,7 +2,7 @@
 
 **WebSocket GUI + asyncio server** for DIY motorized camera sliders. Sibling of [SliderCtrl](https://github.com/fablab-wue/SliderCtrl) (physical panel) and [SliderMC](https://github.com/fablab-wue/SliderMC) (motors). Absorbs unpublished SliderWeb.
 
-![SliderMoCo GUI with Buttons, Info, Joystick, and Timeline](docs/screenshot.png)
+![SliderMoCo GUI with Timeline over Control](docs/screenshot.png)
 
 ```text
 Phone / tablet / PC browser
@@ -38,9 +38,9 @@ Tests: `python tests/test_timeline.py`
 | --- | --- |
 | [User manual](docs/user-manual.md) | Architecture, desktop vs phone, index of panel chapters |
 | [Builder](docs/builder-manual.md) | PC host, Pico/ESP32 flash, UART, Wi-Fi |
-| [Buttons](docs/buttons-panel-manual.md) · [Info](docs/info-panel-manual.md) · [Joystick](docs/joystick-panel-manual.md) · [A/B](docs/ab-panel-manual.md) · [Timelapse](docs/timelapse-panel-manual.md) · [Timeline](docs/timeline-panel-manual.md) | One chapter per panel |
-| [Keyboard](docs/keyboard-control-manual.md) | Desktop keys (Joystick footer) |
-| [Config](docs/config-manual.md) · [Phone](docs/phone-manual.md) | Dialog and narrow-width tabs |
+| [Control](docs/ctrl-panel-manual.md) · [A/B](docs/ab-panel-manual.md) · [Timelapse](docs/timelapse-panel-manual.md) · [Timeline](docs/timeline-panel-manual.md) | Desktop Control, floats, and Timeline |
+| [Keyboard](docs/keyboard-control-manual.md) | Desktop keys (Control toolbar) |
+| [Config](docs/config-manual.md) · [MC Config](docs/mc-config-manual.md) · [Phone](docs/phone-manual.md) | Dialogs and narrow-width tabs |
 | [Safety](docs/safety-manual.md) · [Session](docs/session-manual.md) · [Soft window](docs/soft-window-manual.md) · [Watchdog](docs/watchdog-manual.md) | ENABLE, cruise, limits, sleep |
 | [Wi-Fi](docs/wifi-manual.md) · [Troubleshooting](docs/troubleshooting-manual.md) · [Production](docs/production-checklist-manual.md) | Bring-up and field |
 | [Import / export](docs/import-export-manual.md) · [CLI](docs/cli-manual.md) · [Camera](docs/camera-trigger-manual.md) | Files, raw lines, shutter |
@@ -59,7 +59,7 @@ protocol/            JSON examples
 
 ## GUI
 
-Dockable panels (Buttons, A/B, Info, Joystick, Timelapse, Timeline). The **top-bar toggles** hide panels. Drag the grey **separators** to resize. On a narrow phone (≤800 px), tabs replace the splitter (no Timeline, no Keyboard).
+Dockable panels (Timeline, Ctrl). The **top-bar toggles** hide panels. Control is pinned at the bottom. On a narrow phone (≤800 px), tabs replace the splitter (no Timeline, no Keyboard, no Control).
 
 Timeline is a DaVinci Resolve-style key/curve editor (diamonds, Bézier handles, ease in/out). Scrub the playhead to `MT` that pose. **Play** samples the F-curve into Motion Path (`PC` / `PS` / `PD` / `PG`) — not used for timelapse.
 

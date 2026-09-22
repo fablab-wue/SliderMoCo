@@ -8,7 +8,7 @@ SliderMoCo is a **browser remote**. It cannot see a person on the rail. You are 
 
 ## Before anyone stands near the cart
 
-- ENABLE **off** until Info shows a live pose that matches the machine.
+- ENABLE **off** until Control shows a live pose that matches the machine.
 - Soft window and physical min/max known (see [Soft window](soft-window-manual.md)).
 - First move is a short MOVE, not Timeline Play or LOOP.
 - After Home (`MH`) the cart may travel the full rail. Clear the path.
@@ -71,4 +71,4 @@ Do not Home with a camera cage or a person in the way. See [First power-on](firs
 
 - [Session](session-manual.md) — `SE` vs `SS` / `SA`.
 - [Watchdog](watchdog-manual.md) — phone sleep.
-- [Buttons](buttons-panel-manual.md) — LIMIT and FAST.
+- [Control](ctrl-panel-manual.md) — LIMIT and FAST.

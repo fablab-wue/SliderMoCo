@@ -1,8 +1,8 @@
-# A/B panel
+# A/B
 
-The A/B panel stores **pose marks** (A–H), sends the motors there, and can loop or ping-pong through the ones you enable.
+A/B stores **pose marks** (A–H), sends the motors there, and can loop or ping-pong through the ones you enable.
 
-How many letters you see is **Marks** in [Config](config-manual.md) (2–8, default 4). Extra letters hide; their stored poses stay in memory until you overwrite them.
+On a **wide layout**, open it from Control **A / B …** (float `#winAb`). How many letters you see is **Marks** in [Config](config-manual.md) (2–8, default 4). Extra letters hide; their stored poses stay in memory until you overwrite them.
 
 On a phone this is the **AB** tab — same controls, no Timeline.
 
@@ -12,7 +12,7 @@ This is not Timelapse (no shutter task) and not Timeline keys.
 
 ## Layout
 
-1. Red **⏹**
+Desktop float (no Stop on the dialog — use Control / top-bar ⏹):
 2. **Mark bar** — one ▶X and one ▶▶X per letter, then an ETA (seconds) per letter
 3. **USE_ALL** master switch (right of the empty spacer row)
 4. **Blocks** — one card per letter

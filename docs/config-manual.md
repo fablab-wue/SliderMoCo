@@ -2,6 +2,8 @@
 
 Config is a **dialog**, not a docked panel. On desktop it is the **Config** button in the top bar. On a phone it is the gear tab, then **Project & rig**.
 
+SliderMC persistent keys (`CG` / `CS`) live in the separate [MC Config](mc-config-manual.md) dialog.
+
 It does not hide or show panels (those are the top-bar toggles). It does not edit F-curves (Timeline menu) and does not set SPEED.
 
 ---
@@ -10,7 +12,7 @@ It does not hide or show panels (those are the top-bar toggles). It does not edi
 
 | Field | Range | What it is |
 | --- | --- | --- |
-| **Frame rate** | 1–120, default 30 | Used when you **Export Maya Camera**. It does not change Path frequency or playback |
+| **Frame rate** | 1–120, default 30 | Maya export **and** the Timeline playhead **F** readout. It does not change Path frequency or playback |
 | **Marks** | 2–8, default 4 | How many A–H slots [A/B](ab-panel-manual.md) and [Timelapse](timelapse-panel-manual.md) show. Changing this rebuilds those pads and **cancels** a running LOOP |
 | **Path frequency (Hz)** | 10–200 | Timeline Motion Path sample rate (`play_hz`). Higher = denser `PD` chunks, shorter max duration for a given controller buffer |
 | **Name** | text | Project title (`untitled`) |
@@ -48,7 +50,7 @@ After load, Info names and Timeline lane labels follow the rig. Physical min/max
 
 The **Home** button sends **`MH`** (SliderMC home / reference). Same as the phone Home tab button.
 
-It is not on the desktop Buttons panel.
+It is not on the desktop Control panel.
 
 Homing behaviour (which end, sensors, blocking) is **SliderMC firmware**, not this dialog. ENABLE should be on. Stand clear of the rail.
 
@@ -65,4 +67,5 @@ The separate **Change time** dialog (Timeline menu) is documented in [Timeline](
 ## Related
 
 - [User manual](user-manual.md) — project vs rig vs timeline.json.
+- [MC Config](mc-config-manual.md) — SliderMC `CG` / `CS`.
 - [Phone](phone-manual.md) — SWAP DIR and ENABLE live on Home, not in this dialog.

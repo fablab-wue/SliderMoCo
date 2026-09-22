@@ -20,7 +20,7 @@ Desktop panel chapters still apply where the same pad is reused (AB, Timelapse, 
 | ⏲ | **Timelapse** | Full [Timelapse](timelapse-panel-manual.md) pad |
 | >_ | **CLI** | Five raw MC lines |
 | 🕮 | **Help** | Short on-device tips — [Help tab](help-tab-manual.md) |
-| ⚙ | **Config** | Opens the same [Config](config-manual.md) dialog |
+| ⚙ | **Config** | [MC Config](mc-config-manual.md) and the [Project & rig](config-manual.md) dialog |
 
 Default tab on load is **Move**.
 

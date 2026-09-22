@@ -14,7 +14,8 @@ The physical keypad on [SliderCtrl](https://github.com/fablab-wue/SliderCtrl) is
 2. **Stop** (red, top-right on desktop; big ⏹ on phone pads) is always live. Tap = stop motion (`MS`). Hold **1 s** = halt (`H`). Hold **2 s** = disable (`SE 0`).
 3. **Space** and **Esc** are Stop on a desktop window even when the Keyboard switch is off. See [Keyboard control](keyboard-control-manual.md).
 4. A yellow **Link lost…** strip means the WebSocket dropped. The page reconnects by itself. Do not assume the motors stopped unless you hit Stop or the host watchdog fired.
-5. Mock kinematics (no USB, or a board with no SliderMC banner) still move numbers on screen. The WebSocket `hello` has `sim: true`. The GUI does not badge it — if the rail does not move, you are not on a live MC.
+5. Mock kinematics (no USB, or a board with no SliderMC banner) still move numbers on screen. The WebSocket `hello` has `sim: true`. Desktop host: the topbar port button reads **mock**. The GUI does not otherwise badge it — if the rail does not move, you are not on a live MC.
+6. On a PC / Pi host the topbar port button (next to SliderMoCo) picks or types the SliderMC COM / tty. If the orange **MC lost** strip is up, click it to choose other hardware. Phone UI and Pico AP have no COM picker.
 
 ---
 
@@ -53,13 +54,13 @@ One SliderMC only. A second controller is not wired in this tree.
 
 ## Session vs live
 
-The SPEED and ACCEL sliders write **session** cruise (`SS`, `SA`). Info **Spd** / **Acc** are what the motors report now.
+The SPEED and ACCEL sliders write **session** cruise (`SS`, `SA`). Control **Spd** / **Acc** columns are what the motors report now.
 
 Some actions raise `SS` / `SA` to the axis maximum for the duration of a move:
 
 | Action | Session sliders after |
 | --- | --- |
-| Hold **FAST** on Buttons / phone Move | Restored to your cruise on release |
+| Hold **FAST** on Control / phone Move | Restored to your cruise on release |
 | Keyboard Shift+arrow | Restored on key up |
 | Timeline seek / preroll (`silent`) | Restored when idle |
 | A/B **▶▶** mark, **LOOP**, **PING-PONG** | **Left at max** — set SPEED again if you need cruise |
@@ -78,13 +79,13 @@ Top bar, left to right:
 
 - **SliderMoCo** brand
 - **ENABLE**
-- Panel toggles: Buttons, Info, Joystick, A/B, Timelapse, Timeline
+- Panel toggles: Timeline, Ctrl
 - **Config** — project and rig dialog
 - **Stop**
 
-Default split (`layout_rev` 8): Buttons | Info | Joystick on the top row (thirds); A/B | Timelapse in the middle; Timeline along the bottom. Drag the **grey separators** to resize. Toggles **hide** a panel; they are not the old Config “visible panels” checkboxes.
+Default split (`layout_rev` 12): Timeline fills the workspace; Control is pinned along the bottom. Drag the **grey separator** to resize Timeline vs the rest of the window if you hide Control. Toggles **hide** a panel; they are not Config checkboxes.
 
-Timeline and Keyboard exist only here.
+Timeline, Keyboard, and Control exist only here.
 
 ### Phone (narrow)
 
@@ -102,14 +103,13 @@ Write these as standalone chapters. Open the one for the surface you are looking
 
 | Chapter | Surface | Wide | Phone |
 | --- | --- | --- | --- |
-| [Buttons](buttons-panel-manual.md) | Jog, soft limits, SPEED / ACCEL | Panel | Split: Home + Move + Window |
-| [Info](info-panel-manual.md) | Live pose, state letter, OLED | Panel | Footer + Home INFO |
-| [Joystick](joystick-panel-manual.md) | Analog `MJ` sticks, log curve | Panel | Joy tab (no Keyboard) |
-| [Keyboard](keyboard-control-manual.md) | PC keys for jog, session, Timeline, marks | Joystick footer | — |
-| [A/B](ab-panel-manual.md) | Marks A–H, loop / ping-pong | Panel | AB tab |
-| [Timelapse](timelapse-panel-manual.md) | Interval / MSM server tasks | Panel | Timelapse tab |
+| [Control](ctrl-panel-manual.md) | Jog, LIMIT, telemetry, sticks, SPEED / ACCEL, Play | Panel | — |
+| [Keyboard](keyboard-control-manual.md) | PC keys for jog, session, Timeline, marks | Control toolbar | — |
+| [A/B](ab-panel-manual.md) | Marks A–H, loop / ping-pong | Float from Control | AB tab |
+| [Timelapse](timelapse-panel-manual.md) | Interval / MSM server tasks | Float from Control | Timelapse tab |
 | [Timeline](timeline-panel-manual.md) | F-curves and Motion Path | Panel | — |
 | [Config](config-manual.md) | Project, rig, Home (`MH`) | Dialog | Config tab → same dialog |
+| [MC Config](mc-config-manual.md) | SliderMC `CG` / `CS` keys | Dialog | Config tab → same dialog |
 | [Phone](phone-manual.md) | Home, Move, Window, CLI, Help | — | Tabs |
 
 Hardware bring-up: [Maker / builder manual](builder-manual.md).
@@ -161,6 +161,7 @@ Axis colours are pastels on the hue wheel, rotated **+30°** then every **60°**
 | [Timeline errata](timeline-errata.md) | Silent seek restore |
 | [First power-on](first-power-on-manual.md) | Banner, `CG`, when to Home |
 | [Rig vs MC](rig-vs-mc-manual.md) | `sh_rig` vs `CG` |
+| [MC Config](mc-config-manual.md) | Firmware keys, Motors / Servos / Axis |
 | [Production checklist](production-checklist-manual.md) | Field box sign-off |
 | [Raspberry Pi Zero](pi-zero-manual.md) | CPython host on a Pi |
 | [On-device files](on-device-files-manual.md) | `PUT /api/files` |

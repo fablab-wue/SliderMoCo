@@ -1,6 +1,6 @@
 # Import / export cookbook
 
-Three download kinds live on the desktop Timeline **menu**. Project and rig files live in [Config](config-manual.md). None of this is on the phone editor (there is no Timeline).
+Three download kinds live on the desktop Timeline **and Control** hamburgers (same menu). Project and rig files live in [Config](config-manual.md). None of this is on the phone editor (there is no Timeline).
 
 ---
 
@@ -22,7 +22,7 @@ Import Timeline accepts `format === "slidermoco-timeline"` (and older `"sliderho
 
 | Field | Where | Used for |
 | --- | --- | --- |
-| **Frame rate** | Config, 1–120, default 30 | **Maya export only** |
+| **Frame rate** | Config, 1–120, default 30 | **Maya export** and Timeline **F** readout |
 | **Path frequency** | Config, 10–200, default 50 | Motion Path sample rate **and** CSV `dt = 1/Hz` |
 | Timelapse clock | Fixed **30** in JS | Not Config fps |
 

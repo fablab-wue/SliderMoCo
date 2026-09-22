@@ -36,7 +36,7 @@
       name: "untitled",
       frame_rate: 30,
       mark_count: 4,
-      layout_rev: 11,
+      layout_rev: 12,
       panels: SHLayout.defaultVisible(),
       layout: SHLayout.defaultLayout(),
       lanes: defaultLanes(),
@@ -105,9 +105,9 @@
     defaultRig: defaultRig,
     loadProject: function () {
       var p = loadLocal(PROJ_KEY, defaultProject);
-      if (!p.layout || p.layout_rev !== 11) {
+      if (!p.layout || p.layout_rev !== 12) {
         p.layout = SHLayout.defaultLayout();
-        p.layout_rev = 11;
+        p.layout_rev = 12;
         p.panels = SHLayout.defaultVisible();
         saveLocal(PROJ_KEY, p);
       }

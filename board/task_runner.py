@@ -780,6 +780,7 @@ class TaskRunner:
             return
         ss = getattr(p, "_cmd_spd", None)
         sa = getattr(p, "_cmd_acc", None)
+        sd = getattr(p, "_cmd_dec", None)
         if ss is not None:
             try:
                 self._write("SS %s" % _fmt_pos(abs(float(ss))))
@@ -787,7 +788,9 @@ class TaskRunner:
                 pass
         if sa is not None:
             try:
-                self._write("SA %s" % _fmt_pos(abs(float(sa))))
+                acc = abs(float(sa))
+                dec = abs(float(sd)) if sd is not None else acc
+                self._write("SA %s %s" % (_fmt_pos(acc), _fmt_pos(dec)))
             except (TypeError, ValueError):
                 pass
 

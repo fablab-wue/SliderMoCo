@@ -34,7 +34,7 @@ Desktop has **no** swap switch. It honors the same flags if you set them on a ph
 
 ---
 
-## LIMIT colours (desktop Buttons)
+## LIMIT colours (desktop Control)
 
 | Paint | Meaning |
 | --- | --- |
@@ -66,6 +66,6 @@ There is no tap-to-`MT` LIMIT on the phone. Cruise toward the end, or ▶ a mark
 
 ## Related
 
-- [Buttons](buttons-panel-manual.md)
+- [Control](ctrl-panel-manual.md)
 - [Phone](phone-manual.md#window)
 - [Rig vs MC](rig-vs-mc-manual.md)

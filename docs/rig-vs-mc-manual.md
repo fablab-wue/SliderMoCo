@@ -16,7 +16,7 @@ From `CG` (and live status):
 - Path buffer size (`path_buffer_size`, default 32000 in the UI if missing)
 - Homing, hard limits, driver errors
 
-Change these on the **controller** (its config, flash, or CLI). SliderMoCo **reads** them at link.
+Change these in **[MC Config](mc-config-manual.md)** (or the MC’s own CLI / flash). SliderMoCo **reads** them at link and again when that dialog closes.
 
 ---
 
@@ -65,5 +65,6 @@ Jog always goes to the live MC. A rig that says 600 mm does not stop `MT 800` if
 ## Related
 
 - [Config](config-manual.md)
+- [MC Config](mc-config-manual.md)
 - [Firmware pairing](firmware-pairing-manual.md)
 - [Soft window](soft-window-manual.md)

@@ -10,7 +10,7 @@ This is not Timeline **Play**. Play samples the curves and sends a path that die
 
 ## Layout
 
-The panel has a toolbar, a left column (axis list + transport), and a graph canvas.
+The panel has a toolbar and a graph canvas. There is **no caption**. Axis names, eye/lock, jog, and play buttons live on the [Control](ctrl-panel-manual.md) strip below.
 
 ![Timeline panel: slide and pan F-curves, playhead HUD, and yellow/red/blue limit bands on the time ruler](timeline-panel.png)
 
@@ -18,37 +18,24 @@ The panel has a toolbar, a left column (axis list + transport), and a graph canv
 
 From left to right:
 
-- **Menu** — import/export and Change Time.
-- **Interpolation icons** — Auto, Aligned, Free, Linear (sticky handle modes), then Ease in / Ease out / Ease in/out (presets on the selected key).
-- **Handles** — show or hide Auto / Aligned / Free / Linear handles on the graph.
+- **Menu** — same import/export and Change Time list as the Control hamburger.
+- **Interpolation icons** — Auto, Aligned, Free, Linear (sticky handle modes), then Ease in / Ease out / Ease in/out (presets on the selected key). Square buttons, same size as Control.
+- **Handles** — switch: show or hide Auto / Aligned / Free / Linear handles on the graph.
+- **Follow** — switch (default **on**): with Follow on, a motor-seek (right-click, Ctrl+left) uses a Motion Path when the motors are on the curve. With Follow **off**, those clicks `MT` unless **Ctrl** is down. Ctrl+playhead keys always path.
 - **Fit** — zoom time to the keys, and the Y scale of the **active** lane.
-- **⤝** / **⤞** — jump the playhead to the previous / next key on **visible** lanes (no wrap). Left-click moves the playhead only. Right-click also retargets the motors (`SE 1` + `MT`), same as a right-click on the graph.
-- **Key** — write the live motor pose onto all **visible** lanes at the playhead.
 - **●** — add a marker at the playhead (opens the marker dialog).
 - **T** / **V** — time (seconds) and value of the selected key. **T** is locked for the key at `t = 0`.
 - **max N s** — longest path the controller can store at the current path frequency.
-- Current playhead time (`0.00 s`).
+- Playhead time (`0.00 s`) and frame (`1 F`). Frame is `round(time × FPS) + 1` using Config **Frame rate**. At `t = 0` the frame is **1 F**. Ochre dashed numbers: click time to type seconds, or frame to type a 1-based frame; **Enter** moves the **red** playhead only (motors stay). **Escape** cancels. Same as a graph left-click.
 
-### Axis list
-
-Each lane has an eye, a color swatch, and a name.
-
-- Click the **eye** to hide or show that curve. Hidden lanes are not drawn, not keyed by **Key**, and not checked for speed / accel / travel limits.
-- Click the **name** to make that lane **active**. The Y grid and Y zoom follow the active lane. The active curve is drawn on top.
-
-### Transport (under the axis names)
-
-Two rows of equal-width buttons:
-
-1. **◀** play reverse · **▷** play from playhead · **▶** play from the start
-2. **|◀◀** go to start · **⏹** stop · **▶▶|** go to end
+Prev / next key, Key, Play, and stop are on [Control](ctrl-panel-manual.md).
 
 ### Canvas
 
 - **Top strip** — markers (orange circles with a symbol).
 - **Graph** — keys (circle / diamond / square by mode), curves, handles, origin-aligned grid, and a hollow live-pose circle (curve colour) when motors report a position.
 - **Bottom ruler** — time in seconds, plus blue / yellow / red limit bands.
-- **Playhead** — vertical red line. A HUD next to it lists name, value, and unit for every visible lane.
+- **Playhead** — vertical **red** line at the current / target time. A HUD next to it lists name, value, and unit for every visible lane. A **green** line (no HUD) is the path clock while a path-to-playhead seek is running.
 
 The **Y grid** follows the **active** lane (mm or deg, same numbers) and is always anchored at **0**:
 
@@ -72,10 +59,11 @@ If a level would sit closer than about 8 px, it is hidden (finest first). Numeri
 
 | Action | Result |
 | --- | --- |
-| Left-click empty graph | Move the playhead. Preview only — motors do **not** move. |
-| Right-click empty graph (or drag) | Move the playhead **and** retarget the motors to that pose (`SE 1` + `MT`). Throttled so it does not flood the controller. |
-| Drag the playhead | Same as click: left = preview, right = also seek. Snaps to the nearest **visible** key if you are within **0.15 s**. Hold **Shift** to scrub with no snap. |
-| **⤝** / **⤞** | Previous / next visible key. Left-click: playhead only. Right-click: playhead and motors. |
+| Left-click empty graph | Move the **red** playhead. Preview only — motors do **not** move. |
+| Right-click empty graph | Set the red playhead and move motors. **Follow on** (or Ctrl): path along the curve if live pose matches the old playhead, else `MT`. **Follow off** and no Ctrl: `MT`. The red line jumps to the click; a **green** line clocks the path. Drag-scrub uses throttled `MT`. |
+| Ctrl+left-click empty graph | Same motor-seek as right-click, but **Ctrl forces path** even if Follow is off. |
+| Drag the playhead | Same as click: left = preview; right / Ctrl-left = `MT` while dragging. Snaps to the nearest **visible** key if you are within **0.15 s**. Hold **Shift** to scrub with no snap. |
+| **⤝** / **⤞** | Previous / next visible key. Left-click: playhead only. Right-click: playhead and motors (same Follow / Ctrl rule as a graph right-click). |
 | Middle-button drag | Pan time and the Y view of every **visible** lane. |
 | Mouse wheel | Zoom time, anchored at the cursor. Clamped to the maximum duration. |
 | Ctrl + mouse wheel | Zoom the **active** lane’s Y scale, anchored at the cursor. |
@@ -156,14 +144,23 @@ Turn **Handles** off if the graph is cluttered. Keys and the curve stay visible.
 
 Play samples the curves at the **path frequency** and sends a Motion Path to the controller. The red playhead in the GUI follows in real time.
 
-### Buttons
+Transport lives on [Control](ctrl-panel-manual.md):
 
 - **|◀◀** — jump the playhead to 0 s and seek the motors there at maximum speed and acceleration (`silent` `SS`/`SA`). Session cruise is **restored** when idle.
 - **▶▶|** — jump to the last **motion** key and seek there the same way.
 - **▶** — play from 0 s to the end (last key or last marker, whichever is later).
 - **▷** — play from the **current playhead** to the end. Does nothing if the playhead is already at the last motion key.
+- **◁** — play reverse from the playhead.
 - **◀** — play the whole path **backwards** (deltas reversed).
-- **⏹** — stop. Cancels a running path **and** a preroll seek that has not started the path yet.
+- **⏹** — stop. Cancels a running path (Play or a path-to-playhead seek) **and** a preroll seek that has not started the path yet. On a path-to-playhead seek the **red** playhead stays at the click target; the green clock line disappears. Play still leaves the red playhead where its clock stopped.
+
+### Path vs `MT` seek
+
+A motor-seek (graph right-click, Ctrl+left-click, Control **prev/next** right-click, Ctrl+playhead keys) uses a **Motion Path** when **Follow** is on **or** **Ctrl** is down, **and** the motors are already on the timeline or match the curve at the **old** playhead (within **0.1** per visible axis). Otherwise it jumps with `MT`. Left-click without Ctrl never moves motors.
+
+On a path seek the **red** playhead jumps to the click time (HUD / Ctrl Pose stay there). A **green** line clocks `fromT → toT` for the path duration. When that clock finishes, `SE 1` + `MT` retargets to the red playhead pose so leftover path speed / MC decel does not overshoot. **⏹** aborts the path and does **not** send that retarget `MT`.
+
+A **visible** axis already within **1.0** of the curve gets a small first-slice correction. Hidden lanes and large offsets are not yanked through the path. Jog, joystick, Home, or A/B moves leave the curve, so the next path attempt falls back to `MT`.
 
 ### Preroll
 
@@ -330,3 +327,12 @@ The default two-axis rig (`slide` + `pan`) is a nodal pan on a lateral rail: cam
 **In Fusion / Resolve:** add a Camera 3D node → Inspector → **Import Camera…** → pick the `.ma` file.
 
 Maya ASCII itself is Autodesk’s scene text format. Fusion’s Import Camera path, including Maya `.ma` support, is described here: [Importing Cameras](https://www.steakunderwater.com/VFXPedia/__man/Fusion18-6/Fusion18_Manual_files/part732.htm) (Fusion manual, VFXPedia).
+
+---
+
+## Related
+
+- [Control](ctrl-panel-manual.md) — transport, axis rows, session sliders.
+- [Keyboard](keyboard-control-manual.md) — playhead keys, Key, Play.
+- [Import / export](import-export-manual.md) — Timeline menu.
+- [Timelapse](timelapse-panel-manual.md) — ⏲ Start uses these F-curves.

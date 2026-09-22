@@ -21,7 +21,7 @@ Set the pin in `SliderPins.py`. Keep it off UART (Pico 16/17) and the RGB LED (2
 
 ---
 
-## What the Timelapse panel sends
+## What the Timelapse dialog sends
 
 | UI field | Task argument | Role |
 | --- | --- | --- |

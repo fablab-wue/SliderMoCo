@@ -2,7 +2,7 @@
 
 Corrections to [timeline-panel-manual.md](timeline-panel-manual.md). The panel chapter is still the place to learn the editor. This page is only what drifted after later code.
 
-The panel file’s **Playback → Buttons** lines for start/end seek are updated to match this page. Keep this errata if you are reading an older checkout.
+The panel file’s **Playback** lines for start/end seek are updated to match this page. Keep this errata if you are reading an older checkout.
 
 ---
 
@@ -18,7 +18,7 @@ The panel file’s **Playback → Buttons** lines for start/end seek are updated
 
 Preroll before Play uses the same helper. Keyboard FAST already did this.
 
-**Still leaves session at max:** A/B **▶▶**, LOOP, PING-PONG (`abcApplyMaxSession` is not silent). Desktop Buttons FAST is mirrored while held, then restored on release **without** `silent`.
+**Still leaves session at max:** A/B **▶▶**, LOOP, PING-PONG (`abcApplyMaxSession` is not silent). Desktop Control FAST is mirrored while held, then restored on release **without** `silent`.
 
 ---
 

@@ -577,6 +577,7 @@
     this.viewY = {};
     this.limits = {};
     this.playhead = 0;
+    this.pathHead = null;
     this.showHandles = true;
     this.playing = false;
     this.live = {};
@@ -1197,6 +1198,12 @@
     ctx.strokeStyle = "#ff4d6d";
     ctx.lineWidth = 1.4;
     ctx.beginPath(); ctx.moveTo(p.x, 0); ctx.lineTo(p.x, h); ctx.stroke();
+    if (this.pathHead != null && isFinite(Number(this.pathHead))) {
+      var gp = this._xy(this.pathHead, 0, this.activeId);
+      ctx.strokeStyle = "#3ddc84";
+      ctx.lineWidth = 1.4;
+      ctx.beginPath(); ctx.moveTo(gp.x, 0); ctx.lineTo(gp.x, h); ctx.stroke();
+    }
     var hudY = MARKER_H + 12;
     var pose = this.poseAt(this.playhead);
     this.lanes.forEach(function (ln) {
@@ -1679,19 +1686,31 @@
         return;
       }
       var hit = self._hit(p.x, p.y);
-      if (button === 2) {
-        if (hit && hit.kind === "marker") {
-          self._setSel(hit);
-          self.draw();
-          self.onMarkerEdit(self.markers[hit.i], hit.i);
-          ev.preventDefault();
-          return;
-        }
-        var tv = self._tv(p.x, p.y, self.activeId);
-        self.playhead = self._snapPlayhead(tv.t, ev);
-        self._drag = { hit: { kind: "play" }, commit: true };
-        self.onPlayhead(self.playhead, true, true);
-      } else if (hit && (hit.kind === "key" || hit.kind === "in" || hit.kind === "out")) {
+      if (button === 2 && hit && hit.kind === "marker") {
+        self._setSel(hit);
+        self.draw();
+        self.onMarkerEdit(self.markers[hit.i], hit.i);
+        ev.preventDefault();
+        return;
+      }
+      var onKey = hit && (hit.kind === "key" || hit.kind === "in" || hit.kind === "out");
+      var onMarker = hit && hit.kind === "marker";
+      var ctrlSeek = button === 0 && ev.ctrlKey && !onKey && !onMarker;
+      var rightSeek = button === 2;
+      if (rightSeek || ctrlSeek) {
+        var tvSeek = self._tv(p.x, p.y, self.activeId);
+        var oldT = self.playhead;
+        self.playhead = self._snapPlayhead(tvSeek.t, ev);
+        self._drag = {
+          hit: { kind: "play" },
+          commit: true,
+          ctrl: !!ctrlSeek,
+          oldT: oldT,
+          x: p.x, y: p.y,
+          dragged: false
+        };
+        self.onPlayhead(self.playhead, false);
+      } else if (onKey) {
         var lane = self._lane(hit.lane);
         var keys = sortKeys(lane.keys);
         var k0 = keys[hit.i];
@@ -1724,9 +1743,9 @@
         self._setSel(hit);
         self._drag = { hit: hit, commit: false };
       } else {
-        tv = self._tv(p.x, p.y, self.activeId);
+        var tv = self._tv(p.x, p.y, self.activeId);
         self.playhead = self._snapPlayhead(tv.t, ev);
-        self._drag = { hit: { kind: "play" }, commit: false };
+        self._drag = { hit: { kind: "play" }, commit: false, x: p.x, y: p.y, dragged: false };
         self.onPlayhead(self.playhead, false);
       }
       self.draw();
@@ -1756,9 +1775,18 @@
         return;
       }
       if (hit.kind === "play") {
+        if (!self._drag.dragged) {
+          var dx = p.x - self._drag.x;
+          var dy = p.y - self._drag.y;
+          if (dx * dx + dy * dy > 9) self._drag.dragged = true;
+        }
         var tv = self._tv(p.x, p.y, self.activeId);
         self.playhead = self._snapPlayhead(tv.t, ev);
-        self.onPlayhead(self.playhead, !!self._drag.commit);
+        if (self._drag.commit && self._drag.dragged) {
+          self.onPlayhead(self.playhead, true, false);
+        } else {
+          self.onPlayhead(self.playhead, false);
+        }
       } else if (hit.kind === "marker") {
         tv = self._tv(p.x, p.y, self.activeId);
         var mk = self.markers[hit.i];
@@ -1790,9 +1818,21 @@
       if (!self._drag) return;
       var kind = self._drag.hit.kind;
       var commit = self._drag.commit;
+      var dragged = !!self._drag.dragged;
+      var oldT = self._drag.oldT;
+      var ctrl = !!self._drag.ctrl;
       self._drag = null;
       if (kind === "play") {
-        if (commit) self.onPlayhead(self.playhead, true, true);
+        if (commit) {
+          if (dragged) self.onPlayhead(self.playhead, true, true);
+          else {
+            self.onPlayhead(self.playhead, true, true, {
+              seekMotors: true,
+              oldT: oldT,
+              ctrl: ctrl
+            });
+          }
+        }
       } else if (kind !== "pan") {
         self._smoothAll();
         self._limitDirty = true;

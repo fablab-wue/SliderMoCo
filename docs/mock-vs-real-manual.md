@@ -8,7 +8,7 @@ SliderMoCo can move **numbers** without SliderMC. That is MockMC (or a dummy tha
 
 | Host | Condition |
 | --- | --- |
-| PC / Pi | No `--port`. With `--port`, identity fail stays **unlinked** unless `--mock-on-fail`. |
+| PC / Pi | No `--port`: COM dialog (mock only if you pick Mock or Cancel). With `--port`, identity fail stays **unlinked** unless `--mock-on-fail`. |
 | Pico / ESP32 | UART banner missing for `SW_MC_BANNER_S` (5 s) **and** `SW_MC_SIM` is true |
 
 Log lines: `mock MC axes …`, `UNLINKED …`, `serial identity fail — mock`, `MC mock on (kinematics, no UART)`.
@@ -34,9 +34,9 @@ Mock still reports `axes[]`, SPEED, and Timeline Play (in-process kinematics). S
 
 ## Why wiring “does nothing”
 
-Mock ignores UART. Fixing TX/RX while the process is already in mock does nothing until you **restart** the host (or reboot the Pico) so it can see a banner.
+Mock ignores UART. Fixing TX/RX while the process is already in mock does nothing until you pick a real port in the topbar COM dialog (or restart with `--port`).
 
-PC: if pyserial opened the port but the banner never came, you are already on mock with that process.
+PC: if pyserial opened the port but the banner never came, you stay **unlinked** (unless `--mock-on-fail`). Use the COM dialog to try another device.
 
 ---
 

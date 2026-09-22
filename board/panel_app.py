@@ -67,6 +67,7 @@ class PanelApp:
         self._wdt_tripped = False
         self._cmd_spd = float(getattr(cfg, "SW_SPEED_MIN_MM_S", 1.0))
         self._cmd_acc = None
+        self._cmd_dec = None
         self._session_enabled = False
         self.linked = False
         self.tasks = TaskRunner(self)
@@ -74,6 +75,7 @@ class PanelApp:
         self.bloop = BloopCtrl()
         self.path_samples = []
         self.path_slice_us = 0
+        self._last_cfg_err = None
         self._act = {"state": "?"}
         i = 1
         while i <= 6:
@@ -97,8 +99,17 @@ class PanelApp:
             self._cmd_spd = float(mc._speed_mm_s)
         if getattr(mc, "_accel_mm_s2", None) is not None:
             self._cmd_acc = float(mc._accel_mm_s2)
+        if getattr(mc, "_decel_mm_s2", None) is not None:
+            self._cmd_dec = float(mc._decel_mm_s2)
+        elif self._cmd_acc is not None:
+            self._cmd_dec = self._cmd_acc
 
     def _on_error(self, code, text):
+        c = str(code or "").strip()
+        if c.lower() == "cfg" or c.lower().startswith("cfg"):
+            self._last_cfg_err = (c, str(text or ""))
+            dbg(1, "MC !E cfg", code, text)
+            return
         dbg(1, "MC !E", code, text)
         self.flash("DRV error")
         self.tasks.on_mc_state("E")
@@ -348,6 +359,86 @@ class PanelApp:
                 return False
         return True
 
+    def _cfg_key_readonly(self, key):
+        low = str(key or "").strip().lower()
+        if low == "axis":
+            return True
+        if low.startswith("slider_"):
+            return True
+        if low.startswith("axis_min_") or low.startswith("axis_max_"):
+            return True
+        parts = low.split("_", 2)
+        if len(parts) >= 3 and parts[0] == "axis" and parts[1].isdigit():
+            return True
+        return False
+
+    def mc_config_items(self):
+        """Flat CG map as strings (empty if none)."""
+        items = {}
+        mc = self.mc
+        cmap = getattr(mc, "mc_config", None) if mc is not None else None
+        if not isinstance(cmap, dict):
+            return items
+        for k, v in cmap.items():
+            items[str(k)] = "" if v is None else str(v)
+        return items
+
+    async def fetch_mc_config_items(self):
+        """Re-CG on a real linked MC; mock returns the static dump."""
+        if self.sim:
+            return self.mc_config_items()
+        mc = self.mc
+        if mc is None or not getattr(mc, "linked", False):
+            return None
+        try:
+            await mc.fetchConfig()
+        except Exception as exc:
+            dbg(2, "mc_config CG fail", exc)
+        return self.mc_config_items()
+
+    async def apply_cs_items(self, items):
+        """Send sequential ``CS key value``. Mock is rejected."""
+        errors = []
+        if self.sim:
+            return {
+                "ok": False,
+                "error": "mock is not configurable",
+                "errors": errors,
+            }
+        mc = self.mc
+        if mc is None or not getattr(mc, "linked", False):
+            return {"ok": False, "error": "not linked", "errors": errors}
+        if not isinstance(items, dict):
+            return {"ok": False, "error": "items required", "errors": errors}
+        for raw_key in items:
+            key = str(raw_key or "").strip()
+            val = items.get(raw_key)
+            val = "" if val is None else str(val)
+            if not key:
+                errors.append({"key": key, "error": "empty key"})
+                continue
+            if self._cfg_key_readonly(key):
+                errors.append({"key": key, "error": "read-only"})
+                continue
+            line = "CS " + key + " " + val
+            self._last_cfg_err = None
+            if not self.send_mc_line(line, mirror=False):
+                errors.append({"key": key, "error": "line too long"})
+                continue
+            await asyncio.sleep_ms(250)
+            err = self._last_cfg_err
+            self._last_cfg_err = None
+            if err:
+                _code, text = err
+                msg = str(text or _code or "cfg").strip() or "cfg"
+                errors.append({"key": key, "error": msg})
+                continue
+            cmap = getattr(mc, "mc_config", None)
+            if isinstance(cmap, dict):
+                cmap[key] = val
+        out = {"ok": not errors, "errors": errors}
+        return out
+
     def _mirror_session_line(self, line):
         """Update Pico session cache from SS / SA / SE without blocking UART."""
         parts = str(line).split()
@@ -361,7 +452,10 @@ class PanelApp:
                 pass
         elif cmd == "SA" and len(parts) > 1:
             try:
-                self._cmd_acc = abs(float(parts[1]))
+                acc = abs(float(parts[1]))
+                dec = abs(float(parts[2])) if len(parts) > 2 else acc
+                self._cmd_acc = acc
+                self._cmd_dec = dec
             except ValueError:
                 pass
         elif cmd == "SE" and len(parts) > 1:
@@ -551,6 +645,7 @@ class PanelApp:
             "enabled": self.is_enabled(),
             "ss": self._n(self._cmd_spd),
             "sa": self._n(self._cmd_acc),
+            "decel": self._n(self._cmd_dec if self._cmd_dec is not None else self._cmd_acc),
         }
 
     def _link_fields(self):
@@ -563,10 +658,17 @@ class PanelApp:
             reason = str(getattr(mc, "link_reason", "") or "")
             if bool(self.linked) or bool(self.sim):
                 proto = str(getattr(mc, "EXPECTED_PROTO", "1"))
+        serial_port = ""
+        broker = getattr(self, "serial", None)
+        if broker is not None:
+            serial_port = str(getattr(broker, "current", "") or "")
+        elif self.sim:
+            serial_port = "mock"
         return {
             "mc_name": name,
             "proto": proto,
             "link_reason": reason,
+            "serial_port": serial_port,
         }
 
     async def _fetch_session_live(self):
@@ -593,8 +695,11 @@ class PanelApp:
         try:
             ga = await mc.query("GA", timeout_s=0.5)
             if ga is not None:
-                self._cmd_acc = abs(float(str(ga).strip()))
+                bits = str(ga).replace(",", " ").split()
+                self._cmd_acc = abs(float(bits[0]))
+                self._cmd_dec = abs(float(bits[1])) if len(bits) > 1 else self._cmd_acc
                 mc._accel_mm_s2 = self._cmd_acc
+                mc._decel_mm_s2 = self._cmd_dec
         except Exception as exc:
             dbg(3, "hello GA fail", exc)
 

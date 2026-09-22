@@ -3,11 +3,7 @@
   "use strict";
 
   var PANELS = [
-    { id: "buttons", title: "Buttons" },
-    { id: "info", title: "Info" },
-    { id: "joystick", title: "Joystick" },
-    { id: "timelapse", title: "Timelapse" },
-    { id: "timeline", title: "Timeline" },
+    { id: "timeline", title: "Timeline", noCap: true },
     { id: "ctrl", title: "Ctrl", noCap: true }
   ];
 
@@ -25,35 +21,13 @@
   function defaultLayout() {
     return {
       split: "vertical",
-      frac: 0.40,
-      a: {
-        split: "vertical",
-        frac: 0.56,
-        a: {
-          split: "horizontal",
-          kids: [
-            { frac: 1 / 3, id: "buttons" },
-            { frac: 1 / 3, id: "info" },
-            { frac: 1 / 3, id: "joystick" }
-          ]
-        },
-        b: { id: "timelapse" }
-      },
-      b: {
-        split: "vertical",
-        frac: 0.78,
-        a: { id: "timeline" },
-        b: { id: "ctrl" }
-      }
+      a: { id: "timeline" },
+      b: { id: "ctrl" }
     };
   }
 
   function defaultVisible() {
     return {
-      buttons: true,
-      info: true,
-      joystick: true,
-      timelapse: true,
       timeline: true,
       ctrl: true
     };

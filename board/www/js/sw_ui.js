@@ -432,6 +432,7 @@
     });
     if (sliderEl) sliderEl.value = sv;
     speedLabels().forEach(function (el) {
+      if (el.querySelector && el.querySelector("input.ctrl-num")) return;
       if (el.querySelector && el.querySelector(".int")) setNum(el, cmdSpd);
       else el.textContent = Number(cmdSpd).toFixed(1);
     });
@@ -962,7 +963,7 @@
   function tlExposureSec() {
     var t = Number(tlExposureVal);
     if (isNaN(t) || t < 0.1) t = 0.1;
-    if (t > 60) t = 60;
+    if (t > 30) t = 30;
     tlExposureVal = t;
     return t;
   }
@@ -1071,7 +1072,7 @@
       function clamp() {
         var t = Number(inp.value);
         if (isNaN(t) || t < 0.1) t = 0.1;
-        if (t > 60) t = 60;
+        if (t > 30) t = 30;
         tlExposureVal = t;
         Array.prototype.forEach.call(document.querySelectorAll(".js-tl-exposure"), function (el) {
           el.value = String(t);
@@ -1460,6 +1461,9 @@
     accMax: function () { return accMax; },
     startTimelapse: startTimelapse,
     bindTlFields: bindTlFields,
-    tlFactor: function () { return tlFactorVal; }
+    tlFactor: function () { return tlFactorVal; },
+    tlExposure: function () { return tlExposureSec(); },
+    tlMsm: function () { return !!tlMsmOn; },
+    showUiError: showUiError
   };
 })(window);

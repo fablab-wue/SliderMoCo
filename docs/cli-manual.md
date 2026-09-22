@@ -29,7 +29,7 @@ Prefer the panels when you can. These are the ones you will type when debugging:
 | `MS` | Stop |
 | `H` | Halt |
 | `SE 0` / `SE 1` | Disable / enable |
-| `SS 20` / `SA 100` | Session (mirrored — sliders follow) |
+| `SS 20` / `SA 100` / `SA 100 50` | Session (mirrored — sliders follow) |
 | `MT 100` / `MT 100 45` | Go to pose |
 | `ML` / `MR` / `MJ 0 50` | Jog (send `MS` yourself) |
 | `SL 10` / `SR 500` / `SL none` | Soft window |

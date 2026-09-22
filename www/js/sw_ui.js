@@ -432,6 +432,7 @@
     });
     if (sliderEl) sliderEl.value = sv;
     speedLabels().forEach(function (el) {
+      if (el.querySelector && el.querySelector("input.ctrl-num")) return;
       if (el.querySelector && el.querySelector(".int")) setNum(el, cmdSpd);
       else el.textContent = Number(cmdSpd).toFixed(1);
     });
