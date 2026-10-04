@@ -34,65 +34,29 @@ async def main():
     from panel_app import PanelApp
     from web_app import WebApp
 
+    if not getattr(cfg, "DATA_DIR", None):
+        cfg.DATA_DIR = "data"
     panel = PanelApp(None, led, sim=False)
+    panel.configure_host("pico", 2)
     web = WebApp(panel, wifi)
     web_task = asyncio.create_task(web.run())
     panel_task = asyncio.create_task(panel.run())
 
     async def mc_start():
-        """Link SliderMC at power-on (same supply as Pico) — do not wait for phone/DNS."""
+        """Link UART0 at power-on so the phone still has one MC. UART1 is added from the UI."""
         delay_ms = int(getattr(cfg, "SW_MC_POWER_DELAY_MS", 300))
         if delay_ms > 0:
             dbg(3, "UART power settle", delay_ms, "ms")
             await asyncio.sleep_ms(delay_ms)
-        banner_s = float(getattr(cfg, "SW_MC_BANNER_S", 5.0))
-        sim_ok = bool(getattr(cfg, "SW_MC_SIM", True))
-        mocked = False
-        mc = None
+        from uart_broker import UartBroker
+
+        broker = UartBroker(panel)
+        panel.serial = broker
         try:
-            from MC_client import MC_Client
-
-            mc = MC_Client()
+            await broker.restore_or_uart0()
         except Exception as exc:
-            dbg(1, "MC start fail", exc)
-            mc = None
+            dbg(1, "UART broker fail", exc)
         while True:
-            linked = False
-            if mc is not None:
-                try:
-                    linked = bool(await mc.start(banner_timeout_s=banner_s))
-                except Exception as exc:
-                    dbg(1, "MC identify fail", exc)
-                    linked = False
-            if linked:
-                panel.sim = False
-                panel.bind_mc(mc)
-                try:
-                    await panel._fetch_session_live()
-                except Exception as exc:
-                    dbg(3, "hello GE fail", exc)
-                dbg(3, "MC axes", mc.axis_count, "max_speed", mc.max_speed)
-                while mc.linked and not getattr(mc, "_reboot_banner", False):
-                    await asyncio.sleep_ms(250)
-                dbg(2, "MC lost")
-                panel.linked = False
-                continue
-            reason = getattr(mc, "link_reason", "") if mc is not None else "no uart"
-            dbg(2, "UNLINKED", reason)
-            if (not mocked) and sim_ok:
-                mocked = True
-                try:
-                    from mock_mc import MockMC
-
-                    mock = MockMC()
-                    await mock.start()
-                    panel.sim = True
-                    panel.bind_mc(mock)
-                    panel.linked = True
-                    dbg(3, "MC mock on (kinematics, no UART)")
-                except ImportError:
-                    panel.sim = True
-                    dbg(3, "MC sim on (dummy verbose, all zeros)")
             await asyncio.sleep_ms(1000)
 
     await asyncio.gather(

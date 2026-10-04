@@ -68,6 +68,7 @@ class DummyWifi:
 async def _run(args):
     wifi = DummyWifi()
     panel = PanelApp(None, None, sim=False)
+    panel.configure_host("desktop", 8)
     broker = SerialBroker(panel, args)
     panel.serial = broker
     web = WebApp(panel, wifi)
@@ -79,7 +80,7 @@ async def _run(args):
             dbg(2, "serial identity fail — mock (--mock-on-fail)")
             await broker.connect("mock")
     else:
-        dbg(3, "no --port — wait for COM dialog")
+        await broker.restore_last()
 
     cfg.HTTP_PORT = int(args.http_port)
     dbg(3, "host http", cfg.HTTP_PORT)

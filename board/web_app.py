@@ -23,7 +23,7 @@ from dbg import dbg
 from microdot.microdot import Microdot, Request, Response, send_file, redirect
 from microdot.websocket import with_websocket, WebSocketError
 
-Request.max_body_length = 65536
+Request.max_body_length = 262144
 Request.max_content_length = 262144
 
 try:
@@ -223,14 +223,20 @@ class WebApp:
                 return Response("not found", status_code=404)
             if req.method == "POST":
                 body = _json_body(req)
+                action = str(body.get("action") or "connect").strip().lower()
                 port = body.get("port")
-                if port is None:
+                mc_id = body.get("mc_id")
+                if action == "connect" and port is None:
                     return Response(
                         '{"ok":false,"error":"port required"}',
                         status_code=400,
                         headers={"Content-Type": "application/json"},
                     )
-                result = await broker.connect(str(port))
+                result = await broker.connect(
+                    "" if port is None else str(port),
+                    mc_id=mc_id,
+                    action=action,
+                )
                 try:
                     await web.panel.refresh_hello()
                 except Exception as exc:
@@ -281,12 +287,15 @@ class WebApp:
                     items = {}
                 if body.get("key") is not None:
                     items[str(body.get("key"))] = body.get("value")
-                result = await panel.apply_cs_items(items)
+                result = await panel.apply_cs_items(items, mc_id=body.get("mc_id"))
                 return Response(
                     body=json.dumps(result),
                     headers={"Content-Type": "application/json"},
                 )
-            items = await panel.fetch_mc_config_items()
+            mc_id = None
+            if req.args:
+                mc_id = req.args.get("mc_id")
+            items = await panel.fetch_mc_config_items(mc_id)
             sim = bool(getattr(panel, "sim", False))
             if items is None:
                 return Response(
@@ -448,6 +457,63 @@ class WebApp:
             if not base:
                 return Response('{"error":"no data dir"}', status_code=404)
             folder = base + "/projects"
+            try:
+                os.makedirs(folder)
+            except OSError:
+                pass
+            body = _json_body(req) if req.method != "GET" else {}
+            if req.method == "GET":
+                name = req.args.get("name") if req.args else None
+                if not name:
+                    try:
+                        names = os.listdir(folder)
+                    except OSError:
+                        names = []
+                    files = [n for n in names if str(n).endswith(".json")]
+                    return Response(
+                        body=json.dumps({"files": files}),
+                        headers={"Content-Type": "application/json"},
+                    )
+                rel = _safe_name(name)
+                if rel is None:
+                    return Response("bad name", status_code=400)
+                path = folder + "/" + rel
+                try:
+                    with open(path, "r") as f:
+                        text = f.read()
+                except OSError:
+                    return Response("not found", status_code=404)
+                return Response(body=text, headers={"Content-Type": "application/json"})
+            rel = _safe_name(body.get("name"))
+            if rel is None:
+                return Response("bad name", status_code=400)
+            if not rel.endswith(".json"):
+                rel = rel + ".json"
+            path = folder + "/" + rel
+            if req.method == "DELETE":
+                try:
+                    os.remove(path)
+                except OSError:
+                    return Response("not found", status_code=404)
+                return Response('{"ok":true}', headers={"Content-Type": "application/json"})
+            data = body.get("data")
+            try:
+                text = json.dumps(data) if not isinstance(data, str) else data
+                with open(path, "w") as f:
+                    f.write(text)
+            except OSError:
+                return Response("write fail", status_code=500)
+            return Response(
+                body=json.dumps({"ok": True, "name": rel}),
+                headers={"Content-Type": "application/json"},
+            )
+
+        @app.route("/api/mc-files", methods=["GET", "PUT", "DELETE"])
+        async def api_mc_files(req):
+            base = _data_dir()
+            if not base:
+                return Response('{"error":"no data dir"}', status_code=404)
+            folder = base + "/mc"
             try:
                 os.makedirs(folder)
             except OSError:

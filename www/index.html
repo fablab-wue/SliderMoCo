@@ -26,6 +26,7 @@
       <div id="topPanelToggles" class="topbar-panels"></div>
     </div>
     <div class="topbar-right">
+      <div id="mcBar" class="mc-bar" hidden></div>
       <button type="button" class="btn ghost sm" id="btnMcConfig" title="MC Config">MC Config</button>
       <button type="button" class="btn ghost sm" id="btnConfig" title="Config">Config</button>
       <button type="button" class="btn red sm" data-btn="STOP" title="Stop">Stop</button>
@@ -450,6 +451,12 @@
             <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 6 H16 M4 10 H16 M4 14 H16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
           </summary>
           <div class="tl-menu-pop">
+            <button type="button" class="tl-menu-item js-proj-load">Load</button>
+            <button type="button" class="tl-menu-item js-proj-save">Save</button>
+            <button type="button" class="tl-menu-item js-proj-save-as">Save as</button>
+            <button type="button" class="tl-menu-item js-mc-load">Load selected</button>
+            <button type="button" class="tl-menu-item js-mc-save-as">Save selected as</button>
+            <hr class="tl-menu-sep">
             <button type="button" class="tl-menu-item js-tl-import">Import Timeline</button>
             <button type="button" class="tl-menu-item js-tl-export">Export Timeline</button>
             <button type="button" class="tl-menu-item js-tl-csv">Export CSV</button>
@@ -531,6 +538,12 @@
                 <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 6 H16 M4 10 H16 M4 14 H16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
               </summary>
               <div class="tl-menu-pop">
+                <button type="button" class="tl-menu-item js-proj-load">Load</button>
+                <button type="button" class="tl-menu-item js-proj-save">Save</button>
+                <button type="button" class="tl-menu-item js-proj-save-as">Save as</button>
+                <button type="button" class="tl-menu-item js-mc-load">Load selected</button>
+                <button type="button" class="tl-menu-item js-mc-save-as">Save selected as</button>
+                <hr class="tl-menu-sep">
                 <button type="button" class="tl-menu-item js-tl-import">Import Timeline</button>
                 <button type="button" class="tl-menu-item js-tl-export">Export Timeline</button>
                 <button type="button" class="tl-menu-item js-tl-csv">Export CSV</button>
@@ -615,8 +628,11 @@
           <button type="button" class="btn ochre ctrl-sq js-ctrl-play-from" title="Play from playhead">▷</button>
           <button type="button" class="btn ochre ctrl-sq js-ctrl-play" title="Play">▶</button>
           <button type="button" class="btn ghost ctrl-sq js-ctrl-to-start" data-btn="FAST_START" title="Fast to start">|◀◀</button>
-          <span class="ctrl-sq ctrl-empty" aria-hidden="true"></span>
-          <span class="ctrl-sq ctrl-empty" aria-hidden="true"></span>
+          <label class="ctrl-log mc-link" title="Move every MC on the same timeline">
+            <span class="joy-log-cap">link</span>
+            <input type="checkbox" id="mcLink">
+            <span class="switch-ui" aria-hidden="true"></span>
+          </label>
           <button type="button" class="btn ghost ctrl-sq js-ctrl-to-end" data-btn="FAST_END" title="Fast to end">▶▶|</button>
           <button type="button" class="btn ghost ctrl-sq ctrl-span2 ctrl-ph js-ctrl-dlg" data-float="ab" title="A / B">A / B …</button>
           <span class="ctrl-sq ctrl-empty" aria-hidden="true"></span>
@@ -645,9 +661,20 @@
     </div>
   </dialog>
 
+  <dialog id="fileDlg" class="cfg-dlg">
+    <h2 id="fileDlgTitle">Load</h2>
+    <div id="fileDlgList" class="serial-ports"></div>
+    <label class="field" id="fileDlgNameWrap">Name <input id="fileDlgName" placeholder="project name"></label>
+    <p id="fileDlgErr" class="hint serial-err"></p>
+    <div class="row">
+      <button type="button" class="btn ochre sm" id="fileDlgOk">OK</button>
+      <button type="button" class="btn ghost sm" id="fileDlgCancel">Cancel</button>
+    </div>
+  </dialog>
+
   <dialog id="serialDlg" class="cfg-dlg">
     <h2>SliderMC port</h2>
-    <p class="hint">USB serial to one SliderMC. Mock runs the UI with no hardware.</p>
+    <p class="hint" id="serialHint">Choose a port. If the connect fails, that button stays yellow.</p>
     <div id="serialPorts" class="serial-ports"></div>
     <div class="row">
       <button type="button" class="btn ghost sm" id="serialRefresh">Refresh</button>
@@ -657,6 +684,8 @@
     <div class="row">
       <button type="button" class="btn ochre sm" id="serialConnect">Connect</button>
       <button type="button" class="btn ghost sm" id="serialMock">Mock</button>
+      <button type="button" class="btn ghost sm hidden" id="serialDisconnect">Disconnect</button>
+      <button type="button" class="btn ghost sm hidden" id="serialRemove">Remove</button>
       <button type="button" class="btn ghost sm" id="serialCancel">Cancel</button>
     </div>
   </dialog>

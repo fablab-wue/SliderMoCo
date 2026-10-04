@@ -19,9 +19,9 @@ It does not hide or show panels (those are the top-bar toggles). It does not edi
 
 ### Save / Load project
 
-**Save project** downloads JSON and stores a copy in the browser (`sh_project`). The host’s `/api/projects` folder is unused by this dialog.
+**Save project** downloads JSON and stores a crash copy in the browser (`sh_project`). The host folder `data/projects/` is what Timeline / Control **Save** and **Load** use, not this button.
 
-**Load project** picks a `.json` file. Timeline lanes, markers, mark **count**, layout fractions, and the fields above come back. The **rig** does not. A/B **poses** live in `sw_marks` and are not in this file.
+**Load project** picks a `.json` file from disk. Timeline lanes, markers, mark **count**, layout fractions, and the fields above come back. The **rig** does not. For the multi-controller project on the host, use the hamburger **Load**, not this button.
 
 A project is the *shot*. Swap sliders without losing keys by keeping the project and loading a different rig — or the reverse.
 

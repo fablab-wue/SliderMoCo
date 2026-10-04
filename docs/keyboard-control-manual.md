@@ -57,7 +57,7 @@ These work on desktop even when **Keyboard** is **off**, as long as you are not 
 
 | Key | Result |
 | --- | --- |
-| **Space** | STOP: cancel Timeline Play / path-to-playhead / preroll, cancel A/B LOOP / PING-PONG, `MS`. If a FAST key-jog was held, session `SS` is restored. |
+| **Space** | STOP: cancel Timeline Play / path-to-playhead / preroll, cancel A/B LOOP / PING-PONG, `MS`. **Link** on: `MS` goes to every linked controller. **Link** off: the selected controller only. If a FAST key-jog was held, session `SS` is restored. |
 | **Esc** | Same as Space. |
 
 ---
@@ -112,7 +112,7 @@ If **Ctrl** also moves the motors: Ctrl forces a Motion Path even if Timeline **
 | **Alt+Up** / **Alt+Down** | ± **1 frame** (Config FPS) | No |
 | **Ctrl+Up** / **Ctrl+Down** | ± 0.1 s | Path or `MT` |
 | **Ctrl+Shift+Up** / **Down** | ± 1 s | Path or `MT` |
-| **Ctrl+Alt+Up** / **Down** | ± 1 frame | Path or `MT` |
+| **Ctrl+Alt+Up** / **Down** | ± 1 frame | Path at **5×** slice time, or `MT` |
 | **PageUp** / **PageDown** | ± **1 s** | No |
 | **Shift+PageUp** / **PageDown** | ± **10 s** | No |
 | **Ctrl+Page** (± Shift) | same dt | Path or `MT` |
@@ -121,7 +121,7 @@ If **Ctrl** also moves the motors: Ctrl forces a Motion Path even if Timeline **
 
 Without Ctrl this is the same as a **left-click** on the graph (preview). With Ctrl it is a motor-seek that **always paths** when on-curve, even if Follow is off. Consecutive Ctrl seeks stay on path until you jog, use the joystick, Home, or an A/B move. Key auto-repeat does not start a second path.
 
-These do **not** use the Control **\|◀◀** / **▶▶\|** max-speed seek. Path time equals curve time. `MT` uses the current session `SS` / `SA`.
+These do **not** use the Control **\|◀◀** / **▶▶\|** max-speed seek. Path time equals curve time, unless **Alt** is also down: a path seek then uses 5× the slice time (same steps, slower). `MT` uses the current session `SS` / `SA` and is not slowed. The green line starts when the controller enters path state. Playhead keys are ignored while a path or its preroll is running.
 
 ---
 
@@ -134,10 +134,22 @@ Requires **Keyboard** on. **Ctrl** must be down so a stray letter does not seek,
 | **Ctrl+A** … **Ctrl+H** | MOVE to mark A…H at session speed (`MT`), same as A/B **▶X**. No pose stored → nothing happens. |
 | **Ctrl+Shift+A** … **H** | FAST to that mark (max session SS/SA, same as A/B **▶▶X**). |
 | **Ctrl+Alt+A** … **H** | SET that mark from the live pose, same as **⚑**. |
-| **Ctrl+P** | Timeline Play from the start (same as **▶**). Blocked if a visible lane is over a speed / accel / travel limit. |
-| **Ctrl+R** | Timeline Play reverse (same as **◀**). Same limit rule. |
+| **Ctrl+P** | Timeline Play from the start (same as **▶**). Blocked if a visible lane is over a speed / accel / travel limit. **Ctrl+Alt+P** plays at 5× slice time. |
+| **Ctrl+R** | Timeline Play reverse (same as **◀**). Same limit rule. **Ctrl+Alt+R** plays at 5× slice time. |
 | **Ctrl+E** | Toggle ENABLE (`SE 1` / `SE 0`). |
 | **Ctrl+K** | Timeline **Key**: write the **live** motor pose onto all **visible** lanes at the playhead. |
+
+---
+
+## Switch controller (Ctrl+1 … Ctrl+8)
+
+Requires **Keyboard** on. These are the number keys above the letters, not the numeric keypad (that keypad still sets session speed).
+
+| Key | Result |
+| --- | --- |
+| **Ctrl+1** … **Ctrl+8** | Select that MC button, left to right, same as clicking it. No button in that place → nothing. |
+
+Curves, axis rows, marks, and session sliders swap to that controller. The playhead stays put. Jog after the switch uses the newly selected controller.
 
 ---
 
@@ -151,12 +163,13 @@ Requires **Keyboard** on. **Ctrl** must be down so a stray letter does not seek,
 
 - 0 — no axis · 1–6 — select axis
 - Left / Right — MOVE · Shift+Left / Right — FAST
-- Up / Down — playhead ±0.1 s · Shift — ±1 s · Alt — ±1 frame · Ctrl — path or `MT`
-- PageUp / PageDown — ±1 s · Shift — ±10 s · Ctrl — path or `MT`
-- Home / End — start / last motion key · Ctrl — path or `MT`
+- Up / Down — playhead ±0.1 s · Shift — ±1 s · Alt — ±1 frame · Ctrl — path or `MT` · Ctrl+Alt — slow path (5×)
+- PageUp / PageDown — ±1 s · Shift — ±10 s · Ctrl — path or `MT` · Ctrl+Alt — slow path (5×)
+- Home / End — start / last motion key · Ctrl — path or `MT` · Ctrl+Alt — slow path (5×)
 - Numpad `,` 1–9 0 + − × ÷ — session speed · Alt — session accel
 - Ctrl+A–H — mark MOVE · Ctrl+Shift — FAST · Ctrl+Alt — SET
-- Ctrl+P / Ctrl+R — play / reverse · Ctrl+E — enable · Ctrl+K — key
+- Ctrl+P / Ctrl+R — play / reverse · Ctrl+Alt+P / Ctrl+Alt+R — play at 5× slice time · Ctrl+E — enable · Ctrl+K — key
+- Ctrl+1 … Ctrl+8 — select that MC button (left to right)
 
 ---
 

@@ -12,7 +12,7 @@ The browser sends `{"wdt":"alive"}` every **1 s** (`WDT_MS`). The host answers `
 
 The host arms the watchdog on the **first** pet after connect. Until then, closing the tab will not `MS` from WDT (you may still have left the MC moving — hit Stop).
 
-Timeout: **2500 ms** (`SW_WDT_TIMEOUT_MS`, floor 500). Then one `MS` and the trip latches until a new pet arrives.
+Timeout: **2500 ms** (`SW_WDT_TIMEOUT_MS`, floor 500). Then one `MS` to **every linked** controller, and the trip latches until a new pet arrives. A dead browser cannot leave a linked move running.
 
 ---
 

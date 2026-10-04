@@ -12,7 +12,8 @@ This is unsupported as a two-operator console. It will not crash; it will surpri
 | --- | --- |
 | `SS` / `SA` / `SE` | Last line wins. The other tab’s sliders catch up on the next mirrored status (unless a silent seek is in progress) |
 | ENABLE | Two switches. Either can disable the other mid-move |
-| Jog / `MT` / path | Interleaved on one UART. Two Plays at once corrupt the path buffer |
+| Jog / `MT` / path | Interleaved on that slot’s UART. Two Plays at once corrupt the path buffer |
+| MC row and Link | Both tabs see the same controllers. A command still goes to the slot that tab selected, or to every linked slot if that tab’s Link is on |
 | Soft limits | One window. LIMIT hold in tab A changes colours in tab B |
 | Server task | One `task_runner`. A new ⏲ replaces the old. Any `M…` from either tab cancels it |
 

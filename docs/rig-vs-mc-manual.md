@@ -42,7 +42,7 @@ Operator labels and Timeline defaults when hello has not arrived yet:
 | `name` / `unit` | Info, Timeline lane labels, Maya name matching | Change MC units |
 | `min` / `max` | Timeline bands + pre-link jog paint | Override live `CG` travel once linked |
 | `max_spd` / `max_acc` | Slider tops until hello | Raise the MC ceiling |
-| `mc_id` / `slot` | Display; future multi-MC | Talk to a second UART today |
+| `mc_id` / `slot` | Which pool slot and axis the row is | Add a controller (use the MC row for that) |
 
 Save/Load rig in [Config](config-manual.md) is localStorage + a file. `/api/rigs` on the PC host is unused by the GUI.
 

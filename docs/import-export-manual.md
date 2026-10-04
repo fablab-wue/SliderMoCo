@@ -1,6 +1,6 @@
 # Import / export cookbook
 
-Three download kinds live on the desktop Timeline **and Control** hamburgers (same menu). Project and rig files live in [Config](config-manual.md). None of this is on the phone editor (there is no Timeline).
+The desktop Timeline **and Control** hamburgers are the same menu. The top of that menu saves on the host. Config still downloads a project or rig file. None of this is on the phone editor (there is no Timeline).
 
 ---
 
@@ -8,7 +8,9 @@ Three download kinds live on the desktop Timeline **and Control** hamburgers (sa
 
 | File | Menu / dialog | Contains | Does not contain |
 | --- | --- | --- | --- |
-| **Project** JSON | Config → Save project | Lanes, markers, `play_hz`, mark **count**, fps, name, layout | A/B poses (`sw_marks`), rig, `wifi.json` |
+| **Project** (host) | Menu → Load / Save / Save as | Link, shared playhead, duration, rate, markers, timelapse and stop-motion fields, every MC (port or UART, curves, marks, session, axis show/lock) | Rig, `wifi.json` |
+| **Selected MC** | Menu → Load selected / Save selected as | Name, curves, marks, session, axis show/lock for the selected controller | Port, Link, other MCs, shared timeline |
+| **Project** JSON | Config → Save project | Download of the open shot (lanes, markers, `play_hz`, mark **count**, fps, name, layout) | Rig, `wifi.json` |
 | **Rig** JSON | Config → Save rig | Axis names, units, travel, `mc_id` / slot | Keys |
 | **Timeline** JSON | Export Timeline | `format: slidermoco-timeline`, lanes, markers, `play_hz` | Layout, fps, marks A–H |
 | **CSV** | Export CSV | Sampled Time, Pos/Spd/Acc per lane | Handles, interpolation names |
@@ -63,7 +65,7 @@ Header: `Time,Pos1,Spd1,Acc1,Pos2,…` (lanes sorted by id). Time step is **Path
 2. Export Timeline JSON to archive the handles.
 3. Export CSV if you want a table in another tool.
 4. Keep the **project** if you also care about layout and mark count.
-5. Copy `sw_marks` only by using the same browser profile, or re-⚑ the poses.
+5. A/B poses travel with **Save** (every controller) and **Save selected as** (the one on screen). Config’s downloaded project is the open shot in the browser, not that host file.
 
 There is no DaVinci `.drt` writer.
 

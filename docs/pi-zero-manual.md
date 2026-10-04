@@ -2,7 +2,7 @@
 
 The Pi runs the **same** CPython entry as a Windows/Mac bench PC: `python -m server.host`. It is not the Pico tree. No MicroPython, no SoftAP from this process.
 
-Use a Zero (or Zero 2 W) when you want Ethernet/Wi-Fi on the Pi and USB-serial (or UART) to one SliderMC.
+Use a Zero (or Zero 2 W) when you want Ethernet/Wi-Fi on the Pi and USB-serial (or UART) to one or more SliderMC boards (up to 8 on this host).
 
 ---
 
@@ -44,7 +44,7 @@ You can use the Pi’s GPIO UART instead of USB if you disable Bluetooth overlay
 - `boot.py` REPL window
 - On-device `/api/files` editing of a flash `www/` (the Pi serves repo `www/` from disk — edit there and reload)
 
-`data/` on the Pi can hold `/api/projects` if you later wire the UI to it. Today the browser still uses localStorage on the **phone**.
+`data/projects/` and `data/mc/` on the Pi are what the wide-window **Load** / **Save** menus write. A phone-width browser still has no Timeline and no those menus.
 
 ---
 

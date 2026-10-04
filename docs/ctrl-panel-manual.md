@@ -14,7 +14,7 @@ Left: toolbar, one **axis row** per live motor, then SPEED and ACCEL sliders.
 
 Right: a 4× grid of play / seek / dialog buttons and the two OLED lines.
 
-Axis rows come from `status.axes[]` (or the rig if status has not arrived). Colours are the same pastel map as the Timeline lanes.
+Axis rows come from the **selected** controller (`status.axes[]`, or the rig if status has not arrived). Colours are the same pastel map as the Timeline lanes. Switching MC in the top bar replaces these rows and that controller’s curves. The playhead stays put.
 
 ---
 
@@ -22,10 +22,10 @@ Axis rows come from `status.axes[]` (or the rig if status has not arrived). Colo
 
 Left to right:
 
-1. **Menu** (hamburger) — same import/export / Change Time list as the Timeline menu. Both buttons open the same actions. See [Import / export](import-export-manual.md).
+1. **Menu** (hamburger) — same list as the Timeline menu, starting with **Load**, **Save**, **Save as**, **Load selected**, and **Save selected as**. See [Import / export](import-export-manual.md).
 2. **ENABLE** switch and the live MC **state letter** (I / M / …). Same `SE` as the top-bar ENABLE.
 3. Playhead time (`s`) — follows the Timeline playhead. Ochre dashed number: click, type seconds, **Enter** to move the **red** playhead only (same as a graph left-click). **Escape** cancels. Does not move motors.
-4. Red **⏹** — Stop. Tap `MS` (also cancels Timeline Play and an A/B loop). Hold ~1 s `H`. Hold ~2 s `SE 0`. Same hold map as the top-bar Stop.
+4. Red **⏹** — Stop. Tap `MS` (also cancels Timeline Play and an A/B loop). Hold ~1 s `H`. Hold ~2 s `SE 0`. Same hold map as the top-bar Stop. **Link** off: the selected controller only. **Link** on: every linked controller. Jog, ENABLE, and A/B stay on the selected controller even when Link is on.
 5. **Eye / lock** (all lanes) — show or hide every Timeline lane; lock or unlock every lane’s keys.
 6. **Prev / Key / Next** (all visible lanes) — jump the playhead to the previous or next visible key (left-click: playhead only; right-click: path or `MT`, same as a graph right-click). **Key** writes the live pose onto all visible lanes at the playhead.
 7. **Gamepad** · **Keyboard** · **log** switches.
@@ -136,6 +136,7 @@ FAST (and some A/B / Timeline seeks) may raise `SS` / `SA` temporarily. After a 
 | **▷** | Play from the playhead to the end |
 | **▶** | Play from 0 s to the end |
 | **\|◀◀** | Jump the playhead to 0 s and seek the motors there at max `SS`/`SA` (`silent`). Session cruise is **restored** when idle |
+| **Link** | Centered between **\|◀◀** and **▶▶\|**. Off: Play, play-from, reverse, move-to-start, move-to-end, timeline clicks that move motors, and Stop affect the selected controller only. On: those same actions fan out. Each linked controller uses its own curves at the shared playhead. A full play streams the path to each one, then one release starts them together. A seek sends `MT` to each controller’s own pose, back to back. Disconnected slots are skipped. A linked controller with a flat curve still gets a hold path so the group starts together. Timelapse and Stop Motion use the same switch; their dialog fields stay one copy. |
 | **▶▶\|** | Jump to the last motion key and seek the same way |
 | **A / B …** | Open the A/B float |
 | **Timelapse …** | Open the Timelapse float |

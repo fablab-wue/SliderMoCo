@@ -1447,6 +1447,20 @@
     swapDir: function () { return swapDir; },
     swapDir2: function () { return swapDir2; },
     getMark: function (letter) { return marks[letter] || null; },
+    getMarks: function () {
+      var o = {};
+      "abcdefgh".split("").forEach(function (k) { o[k] = marks[k] || null; });
+      return o;
+    },
+    setMarks: function (o) {
+      "abcdefgh".split("").forEach(function (k) { marks[k] = null; });
+      if (o && typeof o === "object") {
+        "abcdefgh".split("").forEach(function (k) {
+          if (o[k] != null) marks[k] = asPose(o[k]);
+        });
+      }
+      saveMarks();
+    },
     setMarkPose: setMark,
     clearMark: clearMark,
     markAxis1: markAxis1,
@@ -1464,6 +1478,40 @@
     tlFactor: function () { return tlFactorVal; },
     tlExposure: function () { return tlExposureSec(); },
     tlMsm: function () { return !!tlMsmOn; },
+    setTimelapse: function (o) {
+      if (!o) return;
+      var n;
+      if (o.factor != null) {
+        n = Number(o.factor);
+        if (isFinite(n)) {
+          if (n < 3) n = 3;
+          if (n > 1000) n = 1000;
+          tlFactorVal = n;
+        }
+      }
+      if (o.exposure != null) {
+        n = Number(o.exposure);
+        if (isFinite(n)) {
+          if (n < 0.1) n = 0.1;
+          if (n > 30) n = 30;
+          tlExposureVal = n;
+        }
+      }
+      if (o.msm != null) {
+        tlMsmOn = !!o.msm;
+        tlMsmLoaded = true;
+        try { localStorage.setItem(TL_MSM_KEY, tlMsmOn ? "1" : "0"); } catch (e) {}
+      }
+      Array.prototype.forEach.call(document.querySelectorAll(".js-tl-factor"), function (el) {
+        el.value = String(tlFactorVal);
+      });
+      Array.prototype.forEach.call(document.querySelectorAll(".js-tl-exposure"), function (el) {
+        el.value = String(tlExposureVal);
+      });
+      Array.prototype.forEach.call(document.querySelectorAll(".js-tl-msm"), function (el) {
+        el.checked = !!tlMsmOn;
+      });
+    },
     showUiError: showUiError
   };
 })(window);

@@ -552,6 +552,8 @@ input[type=range] { width: 100%; }
 .cfg-dlg::backdrop { background: rgba(0,0,0,0.55); }
 .mc-cfg-dlg {
   max-width: 52rem; max-height: 80vh; padding: 0;
+}
+.mc-cfg-dlg[open] {
   display: flex; flex-direction: column;
 }
 .mc-cfg-cap {

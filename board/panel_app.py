@@ -32,6 +32,36 @@ _WARN = (
 )
 
 
+class McSlot:
+    """One linked SliderMC (USB serial on the desktop host, UART on Pico)."""
+
+    def __init__(self, sid):
+        self.id = int(sid)
+        self.mc = None
+        self.linked = False
+        self.sim = False
+        self.lost = False
+        self.connect_fail = False
+        self.user_hold = False
+        self.port = ""
+        self._cmd_spd = None
+        self._cmd_acc = None
+        self._cmd_dec = None
+        self._session_enabled = False
+        self.path_samples = []
+        self.path_slice_us = 0
+        self.path_armed = False
+        self._act = {"state": "?"}
+        i = 1
+        while i <= 6:
+            suf = "" if i == 1 else str(i)
+            self._act["pos" + suf] = None
+            self._act["spd" + suf] = None
+            self._act["acc" + suf] = None
+            self._act["tgt" + suf] = None
+            i += 1
+
+
 class PanelApp:
     def __init__(self, mc, led, sim=False):
         self.mc = mc
@@ -76,6 +106,11 @@ class PanelApp:
         self.path_samples = []
         self.path_slice_us = 0
         self._last_cfg_err = None
+        self._axis_mc_id = 1
+        self.slots = []
+        self._next_sid = 1
+        self.host_kind = "pico"
+        self.mc_limit = 2
         self._act = {"state": "?"}
         i = 1
         while i <= 6:
@@ -87,22 +122,236 @@ class PanelApp:
             i += 1
         self.bind_mc(mc)
 
-    def bind_mc(self, mc):
-        self.mc = mc
-        if mc is None:
+    def configure_host(self, kind, limit):
+        self.host_kind = str(kind or "pico")
+        try:
+            n = int(limit)
+        except (TypeError, ValueError):
+            n = 1
+        if n < 1:
+            n = 1
+        if n > 8:
+            n = 8
+        self.mc_limit = n
+
+    def primary_slot(self):
+        if not self.slots:
+            return None
+        return self.slots[0]
+
+    def slot_by_id(self, sid):
+        try:
+            sid = int(sid)
+        except (TypeError, ValueError):
+            return None
+        i = 0
+        while i < len(self.slots):
+            if self.slots[i].id == sid:
+                return self.slots[i]
+            i += 1
+        return None
+
+    def resolve_slot(self, mc_id):
+        """Missing id is slot 1 (phone and older clients)."""
+        if mc_id is None or mc_id == "":
+            return self.primary_slot()
+        return self.slot_by_id(mc_id)
+
+    def add_slot(self, port=""):
+        if len(self.slots) >= int(self.mc_limit or 1):
+            return None
+        slot = McSlot(self._next_sid)
+        self._next_sid += 1
+        slot.port = str(port or "")
+        slot._cmd_spd = self._cmd_spd
+        if not self.slots:
+            slot._act = self._act
+            slot._cmd_acc = self._cmd_acc
+            slot._cmd_dec = self._cmd_dec
+            slot._session_enabled = self._session_enabled
+            slot.path_samples = self.path_samples
+            slot.path_slice_us = self.path_slice_us
+        self.slots.append(slot)
+        return slot
+
+    def remove_slot(self, sid):
+        slot = self.slot_by_id(sid)
+        if slot is None:
+            return False
+        self.slots = [s for s in self.slots if s.id != slot.id]
+        self._adopt_primary()
+        return True
+
+    def _adopt_primary(self):
+        slot = self.primary_slot()
+        if slot is None:
+            self.mc = None
             self.linked = False
+            self.sim = False
             return
-        self.linked = bool(getattr(mc, "linked", True))
-        mc.set_axis_status_callback(self._on_axis_status)
-        mc.set_error_callback(self._on_error)
-        if getattr(mc, "_speed_mm_s", None) is not None:
-            self._cmd_spd = float(mc._speed_mm_s)
-        if getattr(mc, "_accel_mm_s2", None) is not None:
-            self._cmd_acc = float(mc._accel_mm_s2)
-        if getattr(mc, "_decel_mm_s2", None) is not None:
-            self._cmd_dec = float(mc._decel_mm_s2)
-        elif self._cmd_acc is not None:
-            self._cmd_dec = self._cmd_acc
+        self.mc = slot.mc
+        self.linked = bool(slot.linked) or bool(slot.sim)
+        self.sim = bool(slot.sim)
+        self._act = slot._act
+        self._cmd_spd = slot._cmd_spd if slot._cmd_spd is not None else self._cmd_spd
+        self._cmd_acc = slot._cmd_acc
+        self._cmd_dec = slot._cmd_dec
+        self._session_enabled = slot._session_enabled
+        self.path_samples = slot.path_samples
+        self.path_slice_us = slot.path_slice_us
+
+    def _push_session(self, slot):
+        if slot is None:
+            return
+        if slot is self.primary_slot():
+            slot._cmd_spd = self._cmd_spd
+            slot._cmd_acc = self._cmd_acc
+            slot._cmd_dec = self._cmd_dec
+            slot._session_enabled = self._session_enabled
+            self.linked = bool(slot.linked) or bool(slot.sim)
+            self.sim = bool(slot.sim)
+            self.mc = slot.mc
+
+    def _axis_cb(self, slot):
+        def cb(axis, state, pos, speed, accel, dest):
+            if slot is self.primary_slot():
+                self._on_axis_status(axis, state, pos, speed, accel, dest)
+                slot._session_enabled = self._session_enabled
+                if state not in ("?", None, ""):
+                    slot.linked = True
+                    slot.lost = False
+                return
+            self._store_axis(slot, axis, state, pos, speed, accel, dest)
+
+        return cb
+
+    def _err_cb(self, slot):
+        def cb(code, text):
+            if slot is self.primary_slot():
+                self._on_error(code, text)
+                return
+            c = str(code or "").strip()
+            if c.lower() == "cfg" or c.lower().startswith("cfg"):
+                self._last_cfg_err = (c, str(text or ""))
+                dbg(1, "MC !E cfg", slot.id, code, text)
+                return
+            dbg(1, "MC !E", slot.id, code, text)
+            self.flash("DRV error")
+
+        return cb
+
+    def _store_axis(self, slot, axis, state, pos, speed, accel, dest):
+        slot._act["state"] = state
+        try:
+            ax = int(axis)
+        except (TypeError, ValueError):
+            ax = 1
+        if ax < 1:
+            ax = 1
+        if ax > 6:
+            ax = 6
+        suf = "" if ax == 1 else str(ax)
+        slot._act["pos" + suf] = pos
+        slot._act["spd" + suf] = speed
+        slot._act["acc" + suf] = accel
+        slot._act["tgt" + suf] = dest
+        if state == "D":
+            slot._session_enabled = False
+        elif state in ("I", "M", "H", "A", "B", "P"):
+            slot._session_enabled = True
+            slot.linked = True
+            slot.lost = False
+
+    def attach_mc(self, slot, mc, sim=False, port=None, linked=None):
+        if slot is None:
+            return
+        slot.mc = mc
+        slot.sim = bool(sim)
+        slot.user_hold = False
+        slot.lost = False
+        slot.connect_fail = False
+        slot.path_armed = False
+        if port is not None:
+            slot.port = str(port or "")
+        if mc is None:
+            slot.linked = False
+        else:
+            if linked is None:
+                slot.linked = bool(getattr(mc, "linked", True)) or bool(sim)
+            else:
+                slot.linked = bool(linked) or bool(sim)
+            try:
+                mc.set_axis_status_callback(self._axis_cb(slot))
+            except Exception:
+                pass
+            try:
+                mc.set_error_callback(self._err_cb(slot))
+            except Exception:
+                pass
+            if getattr(mc, "_speed_mm_s", None) is not None:
+                slot._cmd_spd = float(mc._speed_mm_s)
+            if getattr(mc, "_accel_mm_s2", None) is not None:
+                slot._cmd_acc = float(mc._accel_mm_s2)
+            if getattr(mc, "_decel_mm_s2", None) is not None:
+                slot._cmd_dec = float(mc._decel_mm_s2)
+            elif slot._cmd_acc is not None:
+                slot._cmd_dec = slot._cmd_acc
+        if slot is self.primary_slot():
+            self._adopt_primary()
+
+    def mark_connect_fail(self, slot):
+        """Picker connect failed. Keep the slot, yellow in the UI, not the red drop."""
+        if slot is None:
+            return
+        slot.connect_fail = True
+        slot.lost = False
+        slot.linked = False
+        slot.user_hold = True
+        if slot.mc is not None:
+            try:
+                slot.mc.linked = False
+            except Exception:
+                pass
+        if slot is self.primary_slot():
+            self.linked = False
+
+    def mark_lost(self, slot):
+        if slot is None or slot.user_hold:
+            return
+        slot.connect_fail = False
+        if slot.linked or (slot.mc is not None and not slot.sim):
+            slot.lost = True
+        slot.linked = False
+        if slot.mc is not None:
+            try:
+                slot.mc.linked = False
+            except Exception:
+                pass
+        if slot is self.primary_slot():
+            self.linked = False
+
+    def bind_mc(self, mc):
+        """Attach onto the primary slot (Pico boot and older single-MC callers)."""
+        if mc is None:
+            slot = self.primary_slot()
+            if slot is None:
+                self.mc = None
+                self.linked = False
+                return
+            self.attach_mc(slot, None, sim=False, linked=False)
+            return
+        slot = self.primary_slot()
+        if slot is None:
+            slot = self.add_slot("")
+        if slot is None:
+            self.mc = mc
+            self.linked = bool(getattr(mc, "linked", True))
+            return
+        sim = type(mc).__name__ == "MockMC"
+        port = slot.port
+        if sim and not port:
+            port = "mock"
+        self.attach_mc(slot, mc, sim=sim, port=port)
 
     def _on_error(self, code, text):
         c = str(code or "").strip()
@@ -372,10 +621,21 @@ class PanelApp:
             return True
         return False
 
-    def mc_config_items(self):
+    def _mc_for(self, mc_id=None):
+        if mc_id is not None:
+            slot = self.slot_by_id(mc_id)
+        elif self.slots:
+            slot = self.primary_slot()
+        else:
+            slot = None
+        if slot is not None:
+            return slot.mc, slot
+        return self.mc, None
+
+    def mc_config_items(self, mc_id=None):
         """Flat CG map as strings (empty if none)."""
         items = {}
-        mc = self.mc
+        mc, _slot = self._mc_for(mc_id)
         cmap = getattr(mc, "mc_config", None) if mc is not None else None
         if not isinstance(cmap, dict):
             return items
@@ -383,29 +643,31 @@ class PanelApp:
             items[str(k)] = "" if v is None else str(v)
         return items
 
-    async def fetch_mc_config_items(self):
+    async def fetch_mc_config_items(self, mc_id=None):
         """Re-CG on a real linked MC; mock returns the static dump."""
-        if self.sim:
-            return self.mc_config_items()
-        mc = self.mc
+        mc, slot = self._mc_for(mc_id)
+        sim = bool(slot.sim) if slot is not None else bool(self.sim)
+        if sim:
+            return self.mc_config_items(mc_id)
         if mc is None or not getattr(mc, "linked", False):
             return None
         try:
             await mc.fetchConfig()
         except Exception as exc:
             dbg(2, "mc_config CG fail", exc)
-        return self.mc_config_items()
+        return self.mc_config_items(mc_id)
 
-    async def apply_cs_items(self, items):
+    async def apply_cs_items(self, items, mc_id=None):
         """Send sequential ``CS key value``. Mock is rejected."""
         errors = []
-        if self.sim:
+        mc, slot = self._mc_for(mc_id)
+        sim = bool(slot.sim) if slot is not None else bool(self.sim)
+        if sim:
             return {
                 "ok": False,
                 "error": "mock is not configurable",
                 "errors": errors,
             }
-        mc = self.mc
         if mc is None or not getattr(mc, "linked", False):
             return {"ok": False, "error": "not linked", "errors": errors}
         if not isinstance(items, dict):
@@ -422,7 +684,7 @@ class PanelApp:
                 continue
             line = "CS " + key + " " + val
             self._last_cfg_err = None
-            if not self.send_mc_line(line, mirror=False):
+            if not self.send_mc_line(line, mirror=False, mc_id=mc_id):
                 errors.append({"key": key, "error": "line too long"})
                 continue
             await asyncio.sleep_ms(250)
@@ -439,39 +701,61 @@ class PanelApp:
         out = {"ok": not errors, "errors": errors}
         return out
 
-    def _mirror_session_line(self, line):
-        """Update Pico session cache from SS / SA / SE without blocking UART."""
+    def _mirror_session_line(self, line, slot=None):
+        """Update session cache from SS / SA / SE without blocking UART."""
         parts = str(line).split()
         if not parts:
             return
         cmd = parts[0].upper()
+        holders = []
+        if slot is None or slot is self.primary_slot():
+            holders.append(self)
+            prim = self.primary_slot()
+            if prim is not None:
+                holders.append(prim)
+        else:
+            holders.append(slot)
         if cmd == "SS" and len(parts) > 1:
             try:
-                self._cmd_spd = abs(float(parts[1]))
+                val = abs(float(parts[1]))
             except ValueError:
-                pass
+                return
+            for h in holders:
+                h._cmd_spd = val
         elif cmd == "SA" and len(parts) > 1:
             try:
                 acc = abs(float(parts[1]))
                 dec = abs(float(parts[2])) if len(parts) > 2 else acc
-                self._cmd_acc = acc
-                self._cmd_dec = dec
             except ValueError:
-                pass
+                return
+            for h in holders:
+                h._cmd_acc = acc
+                h._cmd_dec = dec
         elif cmd == "SE" and len(parts) > 1:
             try:
-                self._session_enabled = int(float(parts[1])) != 0
+                en = int(float(parts[1])) != 0
             except ValueError:
-                pass
+                return
+            for h in holders:
+                h._session_enabled = en
 
-    def write_mc(self, line):
+    def _slot_target(self, mc_id):
+        if not self.slots:
+            return None
+        if mc_id is None:
+            return self.primary_slot()
+        return self.slot_by_id(mc_id)
+
+    def write_mc(self, line, mc_id=None):
         """UART write for task-owned lines (MT/MS/IM). No task-cancel, no session mirror."""
         line = str(line or "").strip()
         if not self._mc_line_ok(line):
             dbg(2, "mc reject", repr(line)[:40])
             return False
         self._echo_mc(line)
-        mc = self.mc
+        slot = self._slot_target(mc_id)
+        mc = slot.mc if slot is not None else self.mc
+        sim = bool(slot.sim) if slot is not None else bool(self.sim)
         if mc is not None:
             try:
                 mc._write_line(line)
@@ -479,9 +763,19 @@ class PanelApp:
             except Exception as exc:
                 dbg(1, "mc write fail", exc)
                 return False
-        return bool(self.sim)
+        return sim
 
-    def send_mc_line(self, line, mirror=True):
+    def write_mc_ids(self, line, ids):
+        """Write one line to each slot with no await between them."""
+        ok = False
+        if not ids:
+            return self.write_mc(line)
+        for sid in ids:
+            if self.write_mc(line, mc_id=sid):
+                ok = True
+        return ok
+
+    def send_mc_line(self, line, mirror=True, mc_id=None):
         """Relay one SliderMC command line (JS → UART). Returns True if sent.
 
         ``mirror=False`` still writes UART (e.g. temporary SS/SA for FAST) but
@@ -496,10 +790,12 @@ class PanelApp:
         # STOP / MOVE / FAST / HOME — all start with M — cancel Pico task first.
         if cmd.startswith("M") and self.tasks.active:
             self.tasks.cancel("move")
+        slot = self._slot_target(mc_id)
         if mirror:
-            self._mirror_session_line(line)
+            self._mirror_session_line(line, slot)
         self._echo_mc(line)
-        mc = self.mc
+        mc = slot.mc if slot is not None else self.mc
+        sim = bool(slot.sim) if slot is not None else bool(self.sim)
         if mc is not None:
             try:
                 mc._write_line(line)
@@ -507,28 +803,72 @@ class PanelApp:
             except Exception as exc:
                 dbg(1, "mc write fail", exc)
                 return False
-        return bool(self.sim)
+        return sim
+
+    def send_mc_all(self, line):
+        """Halt (or any line) on every linked slot, back to back."""
+        if not self.slots:
+            return self.send_mc_line(line, mirror=False)
+        ok = False
+        for slot in self.slots:
+            if not (slot.linked or slot.sim):
+                continue
+            if self.send_mc_line(line, mirror=False, mc_id=slot.id):
+                ok = True
+        return ok
+
+    def _path_slot(self, obj):
+        mid = obj.get("mc_id") if isinstance(obj, dict) else None
+        slot = self._slot_target(mid)
+        return slot
+
+    def _path_store(self, slot):
+        if slot is None:
+            return self.path_samples
+        if slot is self.primary_slot() and slot.path_samples is not self.path_samples:
+            self.path_samples = slot.path_samples
+            self.path_slice_us = slot.path_slice_us
+        return slot.path_samples
 
     def _path_msg(self, obj):
-        """Stream Motion Path: begin / data / go → PC, PS, PD, PG."""
+        """Stream Motion Path: begin / data / go → PC, PS, PD, PG.
+
+        ``sync`` on go arms the slot and holds PG. ``release`` writes PG to
+        every armed id in one tight loop, or to none if any id failed to arm.
+        """
         if not isinstance(obj, dict):
             return
         cmd = str(obj.get("cmd") or "").strip().lower()
+        slot = self._path_slot(obj)
+        mid = slot.id if slot is not None else None
         if cmd == "begin":
-            self.path_samples = []
-            self.path_slice_us = 0
-            self.send_mc_line("PC")
+            if slot is not None:
+                slot.path_samples = []
+                slot.path_slice_us = 0
+                slot.path_armed = False
+                if slot is self.primary_slot():
+                    self.path_samples = slot.path_samples
+                    self.path_slice_us = 0
+            else:
+                self.path_samples = []
+                self.path_slice_us = 0
+            self.send_mc_line("PC", mc_id=mid)
             us = obj.get("slice_us")
             if us is not None:
                 try:
-                    self.path_slice_us = int(us)
-                    self.send_mc_line("PS %d" % self.path_slice_us)
+                    us = int(us)
                 except (TypeError, ValueError):
-                    self.path_slice_us = 0
+                    us = 0
+                if slot is not None:
+                    slot.path_slice_us = us
+                if slot is None or slot is self.primary_slot():
+                    self.path_slice_us = us
+                if us:
+                    self.send_mc_line("PS %d" % us, mc_id=mid)
             return
         if cmd == "data":
             samples = obj.get("samples") or []
-            store = self.path_samples
+            store = self._path_store(slot)
             for row in samples:
                 if isinstance(row, (list, tuple)):
                     toks = []
@@ -546,18 +886,51 @@ class PanelApp:
                         toks.append("0")
                         stored.append(0)
                     store.append(stored)
-                    self.send_mc_line("PD " + " ".join(toks))
+                    self.send_mc_line("PD " + " ".join(toks), mc_id=mid)
                 else:
                     try:
                         v = int(row)
                     except (TypeError, ValueError):
                         continue
                     store.append([v])
-                    self.send_mc_line("PD %d" % v)
+                    self.send_mc_line("PD %d" % v, mc_id=mid)
             return
         if cmd == "go":
-            self.send_mc_line("SE 1")
-            self.send_mc_line("PG")
+            if obj.get("sync"):
+                if slot is not None:
+                    slot.path_armed = True
+                return
+            self.send_mc_line("SE 1", mc_id=mid)
+            self.send_mc_line("PG", mc_id=mid)
+            if slot is not None:
+                slot.path_armed = False
+            return
+        if cmd == "release":
+            want = obj.get("mc_ids") or []
+            missing = []
+            armed = []
+            i = 0
+            while i < len(want):
+                try:
+                    sid = int(want[i])
+                except (TypeError, ValueError):
+                    sid = 0
+                s = self.slot_by_id(sid)
+                if s is None or not s.path_armed or not (s.linked or s.sim):
+                    missing.append(sid)
+                else:
+                    armed.append(s)
+                i += 1
+            if missing or not armed:
+                for s in self.slots:
+                    s.path_armed = False
+                if missing:
+                    self.flash("path MC " + ",".join(str(n) for n in missing))
+                return
+            for s in armed:
+                self.write_mc("SE 1", mc_id=s.id)
+                self.write_mc("PG", mc_id=s.id)
+                s.path_armed = False
 
     def on_ws_msg(self, obj):
         """Bridge: ``{"wdt"}``, ``{"mc"}``, ``{"task"}``, ``{"path"}``, ``{"bloop"}``."""
@@ -581,10 +954,17 @@ class PanelApp:
             line = obj.get("task")
             if isinstance(line, dict):
                 line = line.get("cmd") or line.get("line") or ""
-            self.tasks.start(line)
+            self.tasks.start(line, mc_id=obj.get("mc_id"), mc_ids=obj.get("mc_ids"))
             return
         if "mc" in obj:
-            self.send_mc_line(obj.get("mc"), mirror=not bool(obj.get("silent")))
+            if obj.get("all"):
+                self.send_mc_all(obj.get("mc"))
+            else:
+                self.send_mc_line(
+                    obj.get("mc"),
+                    mirror=not bool(obj.get("silent")),
+                    mc_id=obj.get("mc_id"),
+                )
 
     def watchdog_tick(self):
         """If WDT packets stop, send MS — unless a Pico task is running."""
@@ -601,7 +981,7 @@ class PanelApp:
             return
         dbg(2, "wdt timeout — MS")
         self._wdt_tripped = True
-        self.send_mc_line("MS")
+        self.send_mc_all("MS")
         self._idle_motion()
 
     def _dispatch_btn(self, name, ev, ms):
@@ -659,11 +1039,15 @@ class PanelApp:
             if bool(self.linked) or bool(self.sim):
                 proto = str(getattr(mc, "EXPECTED_PROTO", "1"))
         serial_port = ""
-        broker = getattr(self, "serial", None)
-        if broker is not None:
-            serial_port = str(getattr(broker, "current", "") or "")
-        elif self.sim:
-            serial_port = "mock"
+        prim = self.primary_slot()
+        if prim is not None and prim.port:
+            serial_port = str(prim.port)
+        else:
+            broker = getattr(self, "serial", None)
+            if broker is not None:
+                serial_port = str(getattr(broker, "current", "") or "")
+            elif self.sim:
+                serial_port = "mock"
         return {
             "mc_name": name,
             "proto": proto,
@@ -702,23 +1086,205 @@ class PanelApp:
                 mc._decel_mm_s2 = self._cmd_dec
         except Exception as exc:
             dbg(3, "hello GA fail", exc)
+        self._push_session(self.primary_slot())
+
+    async def fetch_slot_session(self, slot):
+        """GE/GS/GA onto one slot (and the panel cache when it is primary)."""
+        if slot is None:
+            await self._fetch_session_live()
+            return
+        mc = slot.mc
+        if mc is None or slot.sim or not getattr(mc, "linked", False):
+            return
+        try:
+            ge = await mc.query("GE", timeout_s=0.5)
+            if ge is not None:
+                slot._session_enabled = int(float(str(ge).strip())) != 0
+                mc._enabled = slot._session_enabled
+        except Exception as exc:
+            dbg(3, "hello GE fail", exc)
+        try:
+            gs = await mc.query("GS", timeout_s=0.5)
+            if gs is not None:
+                slot._cmd_spd = abs(float(str(gs).strip()))
+                mc._speed_mm_s = slot._cmd_spd
+        except Exception as exc:
+            dbg(3, "hello GS fail", exc)
+        try:
+            ga = await mc.query("GA", timeout_s=0.5)
+            if ga is not None:
+                bits = str(ga).replace(",", " ").split()
+                slot._cmd_acc = abs(float(bits[0]))
+                slot._cmd_dec = abs(float(bits[1])) if len(bits) > 1 else slot._cmd_acc
+                mc._accel_mm_s2 = slot._cmd_acc
+                mc._decel_mm_s2 = slot._cmd_dec
+        except Exception as exc:
+            dbg(3, "hello GA fail", exc)
+        if slot is self.primary_slot():
+            self._cmd_spd = slot._cmd_spd if slot._cmd_spd is not None else self._cmd_spd
+            self._cmd_acc = slot._cmd_acc
+            self._cmd_dec = slot._cmd_dec
+            self._session_enabled = slot._session_enabled
 
     async def refresh_hello(self):
         """Re-read CG + GL/GR + GE/GS/GA before hello (phone reconnect)."""
-        mc = self.mc
-        if mc is None or self.sim:
+        if not self.slots:
+            mc = self.mc
+            if mc is None or self.sim:
+                return
+            if not getattr(mc, "linked", False):
+                return
+            try:
+                await mc.fetchConfig()
+            except Exception as exc:
+                dbg(2, "hello CG fail", exc)
+            try:
+                await mc.fetchSoftLimits()
+            except Exception as exc:
+                dbg(2, "hello GL/GR fail", exc)
+            await self._fetch_session_live()
             return
-        if not getattr(mc, "linked", False):
-            return
+        for slot in list(self.slots):
+            mc = slot.mc
+            if mc is None or slot.sim or not getattr(mc, "linked", False):
+                continue
+            try:
+                await mc.fetchConfig()
+            except Exception as exc:
+                dbg(2, "hello CG fail", exc)
+            try:
+                await mc.fetchSoftLimits()
+            except Exception as exc:
+                dbg(2, "hello GL/GR fail", exc)
+            await self.fetch_slot_session(slot)
+
+    def _under_slot(self, slot, fn):
+        """Run fn with panel fields aimed at ``slot``. Primary needs no swap."""
+        if slot is None or slot is self.primary_slot():
+            self._axis_mc_id = slot.id if slot is not None else 1
+            return fn()
+        saved = (
+            self.mc,
+            self.sim,
+            self.linked,
+            self._act,
+            self._cmd_spd,
+            self._cmd_acc,
+            self._cmd_dec,
+            self._session_enabled,
+            getattr(self, "_axis_mc_id", 1),
+        )
+        self.mc = slot.mc
+        self.sim = bool(slot.sim)
+        self.linked = bool(slot.linked) or bool(slot.sim)
+        self._act = slot._act
+        if slot._cmd_spd is not None:
+            self._cmd_spd = slot._cmd_spd
+        self._cmd_acc = slot._cmd_acc
+        self._cmd_dec = slot._cmd_dec
+        self._session_enabled = slot._session_enabled
+        self._axis_mc_id = slot.id
         try:
-            await mc.fetchConfig()
-        except Exception as exc:
-            dbg(2, "hello CG fail", exc)
-        try:
-            await mc.fetchSoftLimits()
-        except Exception as exc:
-            dbg(2, "hello GL/GR fail", exc)
-        await self._fetch_session_live()
+            return fn()
+        finally:
+            (
+                self.mc,
+                self.sim,
+                self.linked,
+                self._act,
+                self._cmd_spd,
+                self._cmd_acc,
+                self._cmd_dec,
+                self._session_enabled,
+                self._axis_mc_id,
+            ) = saved
+
+    def _slot_line(self, slot):
+        if slot.lost and not (slot.linked or slot.sim):
+            return "Lost"
+        if slot.sim and (slot.linked or slot.mc is not None):
+            return "Sim"
+        if not slot.linked:
+            return "No MC"
+        st = str((slot._act or {}).get("state") or "?")
+        if st in ("M", "A", "B", "P"):
+            return "Moving..."
+        if st == "H":
+            return "Homing..."
+        if st == "D":
+            return "Disabled"
+        if st == "E":
+            return "DRV error"
+        return "Ready"
+
+    def slot_public(self, slot):
+        def build():
+            mc = self.mc
+            name = ""
+            banner = ""
+            reason = ""
+            if mc is not None:
+                banner = str(getattr(mc, "banner_name", "") or "")
+                reason = str(getattr(mc, "link_reason", "") or "")
+                cmap = getattr(mc, "mc_config", None)
+                if isinstance(cmap, dict):
+                    name = str(cmap.get("name") or "")
+            if not name and slot.sim:
+                name = "Simulator"
+            st = str((self._act or {}).get("state") or "?")
+            if len(st) != 1:
+                st = "?"
+            return {
+                "id": slot.id,
+                "name": name,
+                "port": slot.port,
+                "linked": bool(slot.linked) or bool(slot.sim),
+                "sim": bool(slot.sim),
+                "lost": bool(slot.lost) and not (bool(slot.linked) or bool(slot.sim)),
+                "failed": bool(slot.connect_fail) and not (bool(slot.linked) or bool(slot.sim) or bool(slot.lost)),
+                "axes": self._axes_list(live=True),
+                "session": self.session_dict(),
+                "soft": self.soft_dict(),
+                "config": self.config_dict(),
+                "mc_name": banner,
+                "link_reason": reason,
+                "state": st,
+                "line1": self._slot_line(slot),
+                "enabled": self.is_enabled(),
+            }
+
+        return self._under_slot(slot, build)
+
+    def _mcs_public(self, live=True):
+        out = []
+        for slot in self.slots:
+            out.append(self.slot_public(slot))
+        return out
+
+    def poll_slots(self):
+        for slot in self.slots:
+            mc = slot.mc
+            if mc is not None and hasattr(mc, "tick"):
+                try:
+                    mc.tick()
+                except Exception:
+                    pass
+            if mc is None:
+                now = bool(slot.sim)
+            else:
+                now = bool(getattr(mc, "linked", False)) or bool(slot.sim)
+            if slot.linked and not now and not slot.user_hold and not slot.sim:
+                slot.lost = True
+                slot.connect_fail = False
+            if now:
+                slot.lost = False
+                slot.connect_fail = False
+            slot.linked = now
+        prim = self.primary_slot()
+        if prim is not None:
+            self.mc = prim.mc
+            self.linked = bool(prim.linked) or bool(prim.sim)
+            self.sim = bool(prim.sim)
 
     def hello_dict(self):
         cfgd = self.config_dict()
@@ -733,6 +1299,9 @@ class PanelApp:
             "task": self.tasks.status_dict(),
         }
         out.update(self._link_fields())
+        out["mcs"] = self._mcs_public(live=True)
+        out["mc_limit"] = int(self.mc_limit or 1)
+        out["host"] = self.host_kind
         return out
 
     def _refresh_lines(self):
@@ -932,7 +1501,7 @@ class PanelApp:
                 "id": i,
                 "name": name,
                 "unit": unit,
-                "mc_id": 1,
+                "mc_id": int(getattr(self, "_axis_mc_id", 1) or 1),
                 "slot": i,
                 "min": amin,
                 "max": amax,
@@ -978,6 +1547,9 @@ class PanelApp:
         out.update(self._link_fields())
         if self.sim:
             out["n"] = self._sim_n
+        out["mcs"] = self._mcs_public(live=True)
+        out["mc_limit"] = int(self.mc_limit or 1)
+        out["host"] = self.host_kind
         return out
 
     def config_dict(self):
@@ -1031,15 +1603,8 @@ class PanelApp:
                 self.bloop.tick()
             except Exception:
                 pass
-            mc = self.mc
-            if mc is not None:
-                self.linked = bool(getattr(mc, "linked", False)) or bool(self.sim)
-            if mc is not None and hasattr(mc, "tick"):
-                try:
-                    mc.tick()
-                except Exception:
-                    pass
-            elif self.sim:
+            self.poll_slots()
+            if self.sim and self.mc is None:
                 self._sim_push()
             self._refresh_lines()
             await asyncio.sleep_ms(sim_ms if self.sim else 50)

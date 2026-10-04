@@ -8,6 +8,9 @@ MC_config = {
     "PIN_UART_TX": 16,  # UART0 TX → SliderMC RX
     "PIN_UART_RX": 17,  # UART0 RX ← SliderMC TX
     "UART_BAUD": 115_200,
+    "UART1_ID": 1,
+    "PIN_UART1_TX": 8,  # UART1 TX → second SliderMC RX
+    "PIN_UART1_RX": 9,  # UART1 RX ← second SliderMC TX
 }
 
 SW_config = {

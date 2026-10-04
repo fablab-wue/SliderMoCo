@@ -66,6 +66,27 @@ html, body {
   justify-self: center; display: flex; align-items: center; gap: 0.55rem; min-width: 0;
 }
 .topbar-right { justify-self: end; display: flex; align-items: center; gap: 0.5rem; }
+.mc-bar { display: flex; align-items: center; justify-content: flex-end; gap: 0.25rem; flex-wrap: wrap; }
+.mc-bar .mc-btn[aria-pressed="true"] {
+  background: #1d4e38; border-color: #3dba7a; color: #e8fff1;
+}
+.mc-bar .mc-btn.lost {
+  background: #8d2430; border-color: #e05a68; color: #fff;
+}
+.mc-bar .mc-btn.lost[aria-pressed="true"] {
+  background: #a82836; border-color: #ff8b96; color: #fff;
+}
+.mc-bar .mc-btn.fail {
+  background: #8a6a10; border-color: #e6c04a; color: #fff8dc;
+}
+.mc-bar .mc-btn.fail[aria-pressed="true"] {
+  background: #a67f12; border-color: #ffe08a; color: #fff;
+}
+.ctrl-buttons .mc-link {
+  grid-column: span 2;
+  display: flex; align-items: center; justify-content: center;
+  gap: 0.35rem; height: var(--ctrl-sq); margin: 0;
+}
 .topbar-sep {
   width: 1px; align-self: stretch; min-height: 1.4rem; background: #2a333c;
 }
@@ -552,6 +573,8 @@ input[type=range] { width: 100%; }
 .cfg-dlg::backdrop { background: rgba(0,0,0,0.55); }
 .mc-cfg-dlg {
   max-width: 52rem; max-height: 80vh; padding: 0;
+}
+.mc-cfg-dlg[open] {
   display: flex; flex-direction: column;
 }
 .mc-cfg-cap {

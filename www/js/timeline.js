@@ -7,6 +7,10 @@
   var COLORS_SEL = (global.SHLayout && global.SHLayout.AXIS_COLORS_SEL) ||
     ["#8b1ff0", "#1ff08b", "#ef8921", "#1f8bf0", "#89ef21", "#f01f8b"];
 
+  function laneOn(ed, id) {
+    return !ed || ed.visible[id] !== false;
+  }
+
   function laneColor(id, selected) {
     if (global.SHLayout && typeof global.SHLayout.axisColor === "function") {
       return global.SHLayout.axisColor(id, selected);
@@ -580,6 +584,7 @@
     this.pathHead = null;
     this.showHandles = true;
     this.playing = false;
+    this.pathLocked = false;
     this.live = {};
     this.sel = null;
     this.activeId = null;
@@ -755,7 +760,7 @@
     el.innerHTML = "";
     this.lanes.forEach(function (ln) {
       var row = document.createElement("div");
-      var on = !!self.visible[ln.id];
+      var on = laneOn(self, ln.id);
       var act = self.activeId === ln.id;
       row.className = "tl-track" + (on ? " on" : "") + (act ? " active" : "");
       row.style.setProperty("--swatch", COLORS[(ln.id - 1) % COLORS.length]);
@@ -766,7 +771,7 @@
       eye.textContent = on ? "◉" : "○";
       eye.onclick = function (ev) {
         ev.stopPropagation();
-        self.visible[ln.id] = !self.visible[ln.id];
+        self.visible[ln.id] = self.visible[ln.id] === false;
         self._tracks();
         self.draw();
       };
@@ -830,7 +835,7 @@
     var dur = duration(this.lanes);
     var self = this;
     this.lanes.forEach(function (ln) {
-      if (!self.visible[ln.id]) return;
+      if (!laneOn(self, ln.id)) return;
       var lim = self.limits[ln.id] || {};
       var maxSpd = f(lim.max_spd, 1e9);
       var maxAcc = f(lim.max_acc, 1e9);
@@ -898,7 +903,7 @@
       });
     }
     this.lanes.forEach(function (ln) {
-      if (!self.visible[ln.id]) return;
+      if (!laneOn(self, ln.id)) return;
       var segs = self._limitSegs[ln.id] || { yellow: [], red: [], blue: [] };
       strokeRuns(segs.blue, BLUE);
       strokeRuns(segs.yellow, YELLOW);
@@ -982,18 +987,22 @@
       ctx.restore();
       labels.push({ x: pt.x, y: pt.y, text: fmtVal(k.value), sel: sel, col: col });
     });
-    var liveV = this.playing ? evalAxis(keys, this.playhead) : this.live[ln.id];
-    if (liveV != null) {
-      pt = this._xy(this.playhead, liveV, ln.id);
+    function strokeLive(t) {
+      if (t == null || !isFinite(Number(t))) return;
+      var liveV = self.live[ln.id];
+      if (liveV == null || !isFinite(Number(liveV))) return;
+      var lp = self._xy(Number(t), Number(liveV), ln.id);
       ctx.save();
       ctx.globalAlpha = 1;
       ctx.strokeStyle = col;
       ctx.lineWidth = 1.8;
       ctx.beginPath();
-      ctx.arc(pt.x, pt.y, 6, 0, Math.PI * 2);
+      ctx.arc(lp.x, lp.y, 6, 0, Math.PI * 2);
       ctx.stroke();
       ctx.restore();
     }
+    strokeLive(this.playhead);
+    if (this.pathHead != null) strokeLive(this.pathHead);
     return labels;
   };
 
@@ -1162,11 +1171,11 @@
     var self = this;
     var allLabels = [];
     this.lanes.forEach(function (ln) {
-      if (!self.visible[ln.id] || ln.id === self.activeId) return;
+      if (!laneOn(self, ln.id) || ln.id === self.activeId) return;
       allLabels = allLabels.concat(self._drawLane(ctx, ln, w, false));
     });
     var act = this._lane(this.activeId);
-    if (act && this.visible[act.id]) {
+    if (act && laneOn(this, act.id)) {
       allLabels = allLabels.concat(this._drawLane(ctx, act, w, true));
     }
     ctx.font = "9px system-ui";
@@ -1207,7 +1216,7 @@
     var hudY = MARKER_H + 12;
     var pose = this.poseAt(this.playhead);
     this.lanes.forEach(function (ln) {
-      if (!self.visible[ln.id]) return;
+      if (!laneOn(self, ln.id)) return;
       var col = laneColor(ln.id, ln.id === self.activeId);
       var unit = ln.unit ? " " + ln.unit : "";
       var txt = (ln.name || ("A" + ln.id)) + " " + fmtVal(pose[ln.id]) + unit;
@@ -1237,7 +1246,7 @@
       if (d < HIT_R) cands.push({ d: d, hit: hit });
     }
     this.lanes.forEach(function (ln) {
-      if (!self.visible[ln.id] || self.locked[ln.id]) return;
+      if (!laneOn(self, ln.id) || self.locked[ln.id]) return;
       sortKeys(ln.keys).forEach(function (k, ki) {
         var pt = self._xy(f(k.t), f(k.value), ln.id);
         consider(Math.hypot(pt.x - px, pt.y - py), { kind: "key", lane: ln.id, i: ki });
@@ -1335,7 +1344,7 @@
     this.lanes.forEach(function (ln) {
       if (onlyId != null && ln.id !== onlyId) return;
       if (self.locked[ln.id]) return;
-      if (onlyId == null && !self.visible[ln.id]) return;
+      if (onlyId == null && !laneOn(self, ln.id)) return;
       var keys = sortKeys(ln.keys);
       var val = live && live[ln.id] != null ? live[ln.id] : evalAxis(keys, t);
       var prev = keys[0];
@@ -1514,7 +1523,7 @@
     var times = [];
     var self = this;
     this.lanes.forEach(function (ln) {
-      if (!self.visible[ln.id]) return;
+      if (!laneOn(self, ln.id)) return;
       (ln.keys || []).forEach(function (k) {
         times.push(f(k.t));
       });
@@ -1698,6 +1707,10 @@
       var ctrlSeek = button === 0 && ev.ctrlKey && !onKey && !onMarker;
       var rightSeek = button === 2;
       if (rightSeek || ctrlSeek) {
+        if (self.pathLocked) {
+          ev.preventDefault();
+          return;
+        }
         var tvSeek = self._tv(p.x, p.y, self.activeId);
         var oldT = self.playhead;
         self.playhead = self._snapPlayhead(tvSeek.t, ev);
@@ -1705,6 +1718,7 @@
           hit: { kind: "play" },
           commit: true,
           ctrl: !!ctrlSeek,
+          alt: !!ev.altKey,
           oldT: oldT,
           x: p.x, y: p.y,
           dragged: false
@@ -1743,6 +1757,10 @@
         self._setSel(hit);
         self._drag = { hit: hit, commit: false };
       } else {
+        if (self.pathLocked) {
+          ev.preventDefault();
+          return;
+        }
         var tv = self._tv(p.x, p.y, self.activeId);
         self.playhead = self._snapPlayhead(tv.t, ev);
         self._drag = { hit: { kind: "play" }, commit: false, x: p.x, y: p.y, dragged: false };
@@ -1764,7 +1782,7 @@
         self._clampView();
         plotH = self._plotH(r.height);
         self.lanes.forEach(function (ln) {
-          if (!self.visible[ln.id]) return;
+          if (!laneOn(self, ln.id)) return;
           var snap = self._drag.ySnap[ln.id];
           if (!snap) return;
           dv = ((p.y - self._drag.y) / plotH) * (snap.v1 - snap.v0);
@@ -1821,6 +1839,7 @@
       var dragged = !!self._drag.dragged;
       var oldT = self._drag.oldT;
       var ctrl = !!self._drag.ctrl;
+      var alt = !!self._drag.alt;
       self._drag = null;
       if (kind === "play") {
         if (commit) {
@@ -1829,7 +1848,8 @@
             self.onPlayhead(self.playhead, true, true, {
               seekMotors: true,
               oldT: oldT,
-              ctrl: ctrl
+              ctrl: ctrl,
+              slow: alt
             });
           }
         }
@@ -1858,7 +1878,7 @@
         return;
       }
       var tv = self._tv(p.x, p.y, self.activeId);
-      var lane2 = self._lane(self.activeId) || self.lanes.filter(function (ln) { return self.visible[ln.id]; })[0];
+      var lane2 = self._lane(self.activeId) || self.lanes.filter(function (ln) { return laneOn(self, ln.id); })[0];
       if (!lane2) return;
       var keys = sortKeys(lane2.keys);
       var h = defaultHandles(1);

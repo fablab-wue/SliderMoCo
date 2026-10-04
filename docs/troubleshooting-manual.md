@@ -25,12 +25,14 @@ Reconnect is automatic (~800 ms). Hello refresh re-reads `CG` / `GL` / `GR` / se
 | Symptom | Check |
 | --- | --- |
 | `pyserial missing` | `pip install -r requirements-host.txt` |
-| Banner timeout → unlinked | Wrong `COMx`; another app owns the port (Thonny, a terminal); MC off; baud ≠ 115200. Desktop: click the topbar port button or the **MC lost** strip and pick another device. |
+| Banner timeout → unlinked | Wrong `COMx`; another app owns the port (Thonny, a terminal); MC off; baud ≠ 115200. Desktop: **+** or right-click that MC button and pick another device. |
 | Garbled banner | 5 V USB-TTL into 3.3 V RX; bad baud |
 | Port 80 surprise | Host **forces 8080** if config says 80 |
-| `data/` empty | UI does not PUT `/api/projects` yet |
+| MC button **yellow** | The port dialog’s Connect failed (wrong port, port busy, no banner). It stays yellow until a later connect works. Disconnect is not yellow |
+| MC button **red** | That link was up and then dropped (unplug, UART loss). It stays red until it links again. A disconnect you chose is not red |
+| Project Save does nothing on disk | **Save** is the hamburger, under `data/projects/`. Config **Save project** only downloads a file |
 
-Windows: Device Manager → Ports. Close the serial monitor before Connect. Switching COM in the dialog does not require a host restart.
+Windows: Device Manager → Ports. Close the serial monitor before Connect. Changing a port from the MC button does not require a host restart. A port already used by another slot is refused.
 
 ---
 

@@ -111,25 +111,44 @@ class PyserialUart:
             raise OSError("serial read")
 
 
-def load_last_port():
+def load_last_ports():
     try:
         raw = LAST_SERIAL.read_text(encoding="utf-8")
-        o = json.loads(raw)
-        p = str((o or {}).get("port") or "").strip()
-        return p
+        o = json.loads(raw) or {}
     except Exception:
-        return ""
+        return []
+    ports = o.get("ports")
+    if isinstance(ports, list):
+        out = []
+        for p in ports:
+            p = str(p or "").strip()
+            if p:
+                out.append(p)
+        return out
+    p = str(o.get("port") or "").strip()
+    return [p] if p else []
+
+
+def load_last_port():
+    ports = load_last_ports()
+    return ports[0] if ports else ""
+
+
+def save_last_ports(ports):
+    clean = []
+    for p in ports or []:
+        p = str(p or "").strip()
+        if p and p not in clean:
+            clean.append(p)
+    try:
+        LAST_SERIAL.parent.mkdir(parents=True, exist_ok=True)
+        LAST_SERIAL.write_text(json.dumps({"ports": clean}), encoding="utf-8")
+    except Exception as exc:
+        dbg(2, "last serial save fail", exc)
 
 
 def save_last_port(port):
-    port = str(port or "").strip()
-    if not port:
-        return
-    try:
-        LAST_SERIAL.parent.mkdir(parents=True, exist_ok=True)
-        LAST_SERIAL.write_text(json.dumps({"port": port}), encoding="utf-8")
-    except Exception as exc:
-        dbg(2, "last serial save fail", exc)
+    save_last_ports([port] if port else [])
 
 
 def list_serial_ports():
@@ -184,6 +203,8 @@ async def _discard_mc(mc):
 
 
 class SerialBroker:
+    """Up to 8 USB serial SliderMC links on the desktop host."""
+
     def __init__(self, panel, args):
         self.panel = panel
         self.args = args
@@ -192,56 +213,154 @@ class SerialBroker:
         self.current = ""
         self._watch_task = None
         self._lock = asyncio.Lock()
+        self._watches = {}
+
+    def _persist(self):
+        ports = []
+        for slot in self.panel.slots:
+            if slot.port:
+                ports.append(slot.port)
+        save_last_ports(ports)
+        self.current = ports[0] if ports else ""
 
     def snapshot(self, extra=None):
         panel = self.panel
-        mc = panel.mc
-        reason = ""
-        name = ""
-        if mc is not None:
-            reason = str(getattr(mc, "link_reason", "") or "")
-            name = str(getattr(mc, "banner_name", "") or "")
+        slots = []
+        for slot in panel.slots:
+            mc = slot.mc
+            slots.append({
+                "id": slot.id,
+                "port": slot.port,
+                "linked": bool(slot.linked) or bool(slot.sim),
+                "sim": bool(slot.sim),
+                "lost": bool(slot.lost) and not (slot.linked or slot.sim),
+                "failed": bool(slot.connect_fail) and not (slot.linked or slot.sim or slot.lost),
+                "mc_name": str(getattr(mc, "banner_name", "") or "") if mc else "",
+                "error": str(getattr(mc, "link_reason", "") or "") if mc else "",
+            })
+        prim = slots[0] if slots else {}
         out = {
             "ports": list_serial_ports(),
-            "current": self.current,
+            "current": prim.get("port") or self.current,
             "last": load_last_port(),
-            "linked": bool(panel.linked) or bool(panel.sim),
-            "sim": bool(panel.sim),
-            "error": reason,
-            "mc_name": name,
+            "linked": bool(prim.get("linked")),
+            "sim": bool(prim.get("sim")),
+            "error": prim.get("error") or "",
+            "mc_name": prim.get("mc_name") or "",
+            "slots": slots,
+            "mc_limit": int(panel.mc_limit or 8),
+            "host": panel.host_kind,
         }
         if extra:
             out.update(extra)
         return out
 
-    async def connect(self, port):
+    async def connect(self, port, mc_id=None, action=None):
         async with self._lock:
-            return await self._connect(port)
+            act = str(action or "connect").strip().lower()
+            if act == "disconnect":
+                return await self._disconnect(mc_id)
+            if act == "remove":
+                return await self._remove(mc_id)
+            return await self._connect(port, mc_id)
 
-    async def _connect(self, port):
+    async def restore_last(self):
+        for port in load_last_ports():
+            await self.connect(port)
+
+    def _port_taken(self, port, except_id=None):
+        want = str(port or "").strip().lower()
+        for slot in self.panel.slots:
+            if except_id is not None and slot.id == except_id:
+                continue
+            if str(slot.port or "").strip().lower() == want and want:
+                return True
+        return False
+
+    async def _connect(self, port, mc_id=None):
         port = str(port or "").strip()
+        if not port:
+            return self.snapshot({"ok": False, "error": "port required"})
+        slot = self.panel.slot_by_id(mc_id) if mc_id not in (None, "") else None
+        if mc_id not in (None, "") and slot is None:
+            return self.snapshot({"ok": False, "error": "no such MC"})
+        if self._port_taken(port, None if slot is None else slot.id):
+            return self.snapshot({"ok": False, "error": "port in use"})
+        fresh = slot is None
+        if fresh and len(self.panel.slots) >= int(self.panel.mc_limit or 8):
+            return self.snapshot({"ok": False, "error": "MC limit"})
+        if fresh:
+            slot = self.panel.add_slot(port)
+            if slot is None:
+                return self.snapshot({"ok": False, "error": "MC limit"})
         if _is_mock_token(port):
-            return await self._bind_mock()
-        return await self._bind_serial(port)
+            ok, err = await self._bind_mock(slot)
+        else:
+            ok, err = await self._bind_serial(slot, port)
+        if ok:
+            self._persist()
+            return self.snapshot({"ok": True, "mc_id": slot.id})
+        await self._stop_watch(slot.id)
+        self.panel.mark_connect_fail(slot)
+        self._persist()
+        return self.snapshot({"ok": False, "error": err or "connect fail", "mc_id": slot.id})
 
-    def _halt_motion(self):
-        panel = self.panel
-        try:
-            if getattr(panel, "tasks", None) is not None:
-                panel.tasks.cancel("serial")
-        except Exception:
-            pass
-        try:
-            panel.send_mc_line("MS", mirror=False)
-        except Exception:
+    async def _disconnect(self, mc_id):
+        slot = self.panel.slot_by_id(mc_id)
+        if slot is None:
+            return self.snapshot({"ok": False, "error": "no such MC"})
+        await self._stop_watch(slot.id)
+        self._halt_slot(slot)
+        await _discard_mc(slot.mc)
+        uart = getattr(slot, "_uart", None)
+        if uart is not None:
             try:
-                panel._stop()
+                uart.close()
             except Exception:
                 pass
+            slot._uart = None
+        slot.user_hold = True
+        slot.lost = False
+        slot.sim = False
+        slot.linked = False
+        slot.mc = None
+        self.panel.attach_mc(slot, None, sim=False, port=slot.port, linked=False)
+        slot.user_hold = True
+        slot.lost = False
+        self._persist()
+        return self.snapshot({"ok": True, "mc_id": slot.id})
 
-    async def _cancel_watch(self):
-        t = self._watch_task
-        self._watch_task = None
+    async def _remove(self, mc_id):
+        slot = self.panel.slot_by_id(mc_id)
+        if slot is None:
+            return self.snapshot({"ok": False, "error": "no such MC"})
+        await self._drop_slot(slot)
+        self._persist()
+        return self.snapshot({"ok": True})
+
+    async def _drop_slot(self, slot):
+        await self._stop_watch(slot.id)
+        self._halt_slot(slot)
+        uart = getattr(slot, "_uart", None)
+        if uart is not None:
+            try:
+                uart.close()
+            except Exception:
+                pass
+        await _discard_mc(slot.mc)
+        self.panel.remove_slot(slot.id)
+
+    def _halt_slot(self, slot):
+        mc = slot.mc if slot is not None else None
+        if mc is None:
+            return
+        try:
+            mc._write_line("MS")
+        except Exception:
+            pass
+
+    async def _stop_watch(self, sid):
+        t = self._watches.pop(sid, None)
         if t is None:
             return
         t.cancel()
@@ -250,109 +369,101 @@ class SerialBroker:
         except (asyncio.CancelledError, Exception):
             pass
 
-    def _ensure_watch(self):
-        if self._watch_task is not None and not getattr(self._watch_task, "done", lambda: True)():
+    def _ensure_watch(self, slot):
+        if slot is None or slot.sim or _is_mock_token(slot.port):
             return
-        if self.uart is None or _is_mock_token(self.current):
+        old = self._watches.get(slot.id)
+        if old is not None and not getattr(old, "done", lambda: True)():
             return
-        self._watch_task = asyncio.create_task(self._watch())
+        self._watches[slot.id] = asyncio.create_task(self._watch(slot.id))
 
-    async def _bind_mock(self):
-        self._halt_motion()
-        await self._cancel_watch()
-        old = self.panel.mc
-        if self.uart is not None:
+    async def _bind_mock(self, slot):
+        self._halt_slot(slot)
+        await self._stop_watch(slot.id)
+        uart = getattr(slot, "_uart", None)
+        if uart is not None:
             try:
-                self.uart.close()
+                uart.close()
             except Exception:
                 pass
-            self.uart = None
+            slot._uart = None
+        old = slot.mc
         n = int(getattr(self.args, "axes", 3) or 3)
         mc = MockMC(axis_count=n)
         await mc.start()
-        self.panel.sim = True
-        self.panel.bind_mc(mc)
-        self.panel.linked = True
-        self.current = "mock"
-        save_last_port("mock")
+        self.panel.attach_mc(slot, mc, sim=True, port="mock", linked=True)
         await _discard_mc(old)
-        dbg(3, "mock MC axes", mc.axis_count)
-        return self.snapshot({"ok": True})
+        dbg(3, "mock MC", slot.id, "axes", mc.axis_count)
+        return True, ""
 
-    async def _bind_serial(self, port):
-        self._halt_motion()
-        await self._cancel_watch()
-        old = self.panel.mc
-        old_uart = self.uart
+    async def _bind_serial(self, slot, port):
+        self._halt_slot(slot)
+        await self._stop_watch(slot.id)
+        old = slot.mc
+        old_uart = getattr(slot, "_uart", None)
         if old_uart is not None:
             try:
                 old_uart.close()
             except Exception:
                 pass
-            self.uart = None
+            slot._uart = None
         await _discard_mc(old)
-        self.panel.sim = False
-        self.panel.linked = False
-        self.current = port
+        slot.mc = None
         args = self.args
         try:
             from MC_client import MC_Client
         except Exception as exc:
             dbg(1, "pyserial / MC_client missing", exc)
-            self.panel.bind_mc(None)
-            return self.snapshot({"ok": False, "error": "pyserial missing"})
+            return False, "pyserial missing"
         try:
             uart = PyserialUart(port, args.baud, dtr=not args.no_dtr)
         except Exception as exc:
             dbg(2, "serial open fail", exc)
-            self.panel.bind_mc(None)
-            return self.snapshot({"ok": False, "error": str(exc) or "open fail"})
-        self.uart = uart
+            return False, str(exc) or "open fail"
+        slot._uart = uart
         settle_s = max(0.0, float(args.settle_ms) / 1000.0)
         if settle_s > 0:
             dbg(3, "UART settle", args.settle_ms, "ms")
             await asyncio.sleep(settle_s)
         mc = MC_Client(uart=uart, baud=args.baud)
-        linked = await self._link(mc, port)
+        linked = await self._link(slot, mc, port)
         if not linked:
             dbg(2, "banner miss - pulse DTR reset")
             await uart.pulse_reset()
             if settle_s > 0:
                 await asyncio.sleep(settle_s)
-            linked = await self._link(mc, port)
-        self._ensure_watch()
+            linked = await self._link(slot, mc, port)
+        self._ensure_watch(slot)
         if linked:
-            save_last_port(port)
-            return self.snapshot({"ok": True})
+            return True, ""
         reason = getattr(mc, "link_reason", "timeout") or "timeout"
-        return self.snapshot({"ok": False, "error": reason})
+        return False, reason
 
-    async def _link(self, mc, port_label):
+    async def _link(self, slot, mc, port_label):
         linked = bool(await mc.start(banner_timeout_s=self.args.banner))
-        self.panel.sim = False
-        self.panel.bind_mc(mc)
+        self.panel.attach_mc(slot, mc, sim=False, port=port_label, linked=linked)
         if linked:
-            self.panel.linked = True
-            await self.panel._fetch_session_live()
+            await self.panel.fetch_slot_session(slot)
             name = getattr(mc, "banner_name", "") or ""
-            dbg(3, "serial MC", port_label, "axes", mc.axis_count, name)
+            dbg(3, "serial MC", slot.id, port_label, "axes", mc.axis_count, name)
             return True
         reason = getattr(mc, "link_reason", "timeout") or "timeout"
-        dbg(1, "UNLINKED", reason)
-        self.panel.linked = False
+        dbg(1, "UNLINKED", slot.id, reason)
         return False
 
-    async def _watch(self):
+    async def _watch(self, sid):
         args = self.args
         settle_s = max(0.0, float(args.settle_ms) / 1000.0)
         while True:
-            if _is_mock_token(self.current) or self.uart is None:
+            slot = self.panel.slot_by_id(sid)
+            if slot is None or slot.user_hold or slot.sim or _is_mock_token(slot.port):
                 await asyncio.sleep(0.5)
                 continue
-            mc = self.panel.mc
-            uart = self.uart
-            if mc is None:
-                await asyncio.sleep(0.5)
+            mc = slot.mc
+            uart = getattr(slot, "_uart", None)
+            if mc is None or uart is None:
+                self.panel.mark_lost(slot)
+                await asyncio.sleep(1.0)
                 continue
             reboot = bool(getattr(mc, "_reboot_banner", False))
             if getattr(mc, "linked", False) and not reboot:
@@ -360,21 +471,20 @@ class SerialBroker:
                 continue
             if reboot:
                 mc._reboot_banner = False
-                dbg(2, "MC reboot banner - re-identify")
-                if await self._link(mc, self.current):
+                dbg(2, "MC reboot banner - re-identify", sid)
+                if await self._link(slot, mc, slot.port):
                     continue
+            self.panel.mark_lost(slot)
             if uart.dead or uart.ser is None:
                 try:
                     uart.open()
                 except Exception as exc:
                     dbg(2, "serial open fail", exc)
-                    self.panel.linked = False
-                    if getattr(mc, "linked", False):
-                        mc.linked = False
-                        mc.link_reason = "lost"
+                    mc.linked = False
+                    mc.link_reason = "lost"
                     await asyncio.sleep(1.0)
                     continue
                 if settle_s > 0:
                     await asyncio.sleep(settle_s)
-            if not await self._link(mc, self.current):
+            if not await self._link(slot, mc, slot.port):
                 await asyncio.sleep(1.0)

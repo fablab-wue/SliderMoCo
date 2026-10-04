@@ -1,6 +1,6 @@
 # Session model (`SS` / `SA` / `SE`)
 
-Session is the **commanded cruise** the host remembers and the sliders show. Live **Spd** / **Acc** on the [Control](ctrl-panel-manual.md) axis rows are what the motors report now.
+Session is the **commanded cruise** the host remembers and the sliders show. Each linked controller has its own SPEED, ACCEL, and ENABLE. Switching the selected MC restores that controller’s sliders. Live **Spd** / **Acc** on the [Control](ctrl-panel-manual.md) axis rows are what the motors report now.
 
 ---
 

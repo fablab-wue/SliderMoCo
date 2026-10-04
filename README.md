@@ -8,7 +8,7 @@
 Phone / tablet / PC browser
         HTTP + /ws JSON  (axes[])
 Pico W / Pico 2 W / ESP32     or     PC / Raspberry Pi Zero (this host)
-        UART MC lines (one SliderMC now)
+        UART or USB serial (up to 2 on a Pico, up to 8 on a PC / Pi)
 SliderMC
 ```
 

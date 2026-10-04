@@ -2,7 +2,7 @@
 
 Under **800 px** width, SliderMoCo hides the desktop top bar and the splitter workspace. You get **tabs** and a **telemetry footer**.
 
-There is **no Timeline** editor and **no Keyboard** control. Marks, timelapse, jog, and Config still work.
+There is **no Timeline** editor, **no Keyboard** control, **no MC row**, and **no Link** switch. Marks, timelapse, jog, and Config still work, and they talk to **slot 1** (commands omit `mc_id`). A wide browser on the same Pico Wi-Fi gets the full desktop UI, limited to two UARTs.
 
 Desktop panel chapters still apply where the same pad is reused (AB, Timelapse, Joy sticks). This chapter is what exists only on the phone chrome.
 

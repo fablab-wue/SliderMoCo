@@ -15,7 +15,7 @@ On a **wide layout**, open it from Control **Timelapse …** (float `#winTl`). T
 | **Desktop** (wide) | Timeline F-curves from **t = 0** to the motion end | **⏲ Start** on the Timelapse float |
 | **Phone** (≤800 px) | Axis-1 crawl toward an **A/B mark** (`sw_marks`) | **⏲A** … **⏲H** — unchanged |
 
-Both layouts share **Timelapse FACTOR**, **Exposure time**, and the **MSM** switch.
+Both layouts share **Timelapse FACTOR**, **Exposure time**, and the **MSM** switch. Those fields are one copy for the whole project. On a wide window with **Link** on, Start uses every linked controller: each one gets its own curves, then one release. The shutter fires once the group is idle on a frame step. Link off, and a phone, use the selected controller only (slot 1 on a phone). Stop Motion’s factor, exposure, frame, and auto fields are shared the same way.
 
 ---
 

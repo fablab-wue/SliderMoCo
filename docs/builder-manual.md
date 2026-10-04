@@ -7,7 +7,7 @@ You are building one of two boxes:
 1. **PC or Raspberry Pi Zero** — CPython serves `www/` and opens a USB serial port to SliderMC (or a mock).
 2. **Pico W / Pico 2 W / ESP32** — MicroPython on the board serves the same UI over Wi-Fi and opens UART to SliderMC.
 
-Both speak the same UART text protocol at **115200 8N1**. Only **one** SliderMC is supported.
+Both speak the same UART text protocol at **115200 8N1**. A PC / Pi host links up to **8** USB serial ports. A Pico links up to **2** UARTs. A phone-width browser still drives slot 1 only.
 
 ---
 
@@ -76,15 +76,15 @@ Verbose mock status is one `#` line with `|` groups, same shape as SliderMC (`#I
 python -m server.host
 ```
 
-On a wide window the topbar **port** button (next to SliderMoCo) opens a dialog: pick a listed COM / tty, type one, or **Mock**. Omit `--port` and that dialog is the way in — the process does not start mock by itself. **Cancel** or **Mock** binds mock so the UI still runs.
+On a wide window the MC row is **+** and one button per linked controller. **+** opens the port dialog: pick a listed COM / tty, type one, or **Mock**. A button is added for that attempt. It stays **yellow** if the connect fails, until a later connect works. Right-click a button to change that port, disconnect, or remove it — that dialog has no Mock row. With zero controllers the dialog still opens once. Omit `--port` and that dialog is the way in — the process does not start mock by itself. **Cancel** or **Mock** on that first dialog binds mock so the UI still runs.
 
-`--port COM5` still links at process start (scripts / CI). You can switch sliders later from the same dialog without restarting the host. Last successful port is remembered in `data/last_serial.json` as a prefill only.
+`--port COM5` still links at process start (scripts / CI). You can add or switch sliders later from the MC row without restarting the host. The last successful connection list is `data/last_serial.json` (`ports`). Startup reconnects that list. An older file with a single `port` is still read.
 
 Linux / macOS: `--port /dev/ttyUSB0` or `/dev/ttyACM0`.
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `--port` | *(empty)* | Serial device. Omit = pick in the desktop COM dialog (mock if you cancel). |
+| `--port` | *(empty)* | First serial device. Omit = pick in the desktop dialog (mock if you cancel with nothing linked). |
 | `--baud` | `115200` | Must match SliderMC. |
 | `--http-port` | `8080` | Browser port. Port 80 in config is forced to 8080 on this host. |
 | `--banner` | `5` | Seconds to wait for `# MC V1 -` plus `VP:1`. Timeout → **UNLINKED** (no silent mock). |
@@ -95,7 +95,7 @@ Linux / macOS: `--port /dev/ttyUSB0` or `/dev/ttyACM0`.
 
 If `pyserial` is missing, the COM dialog cannot open a port (`pip install pyserial`). `--port` at process start still exits if pyserial is missing.
 
-The host can store JSON under `data/rigs/` and `data/projects/` (`/api/rigs`, `/api/projects`). The current browser UI **does not call those endpoints** — Config Save/Load is `localStorage` plus a downloaded file.
+The host stores JSON under `data/projects/` (`/api/projects`) and `data/mc/` (`/api/mc-files`). Timeline and Control **Load** / **Save** use those. Config **Save project** is still a browser download. `data/rigs/` (`/api/rigs`) is not used by the current GUI.
 
 Tests (no motors):
 
@@ -111,7 +111,7 @@ python tests/test_timeline.py
 4. Browser Info rows should populate; OLED should not stay empty if the MC sends lines.
 5. ENABLE on, small MOVE, confirm direction. Use **SWAP DIR** on the phone Home tab if the rail is backwards (desktop swap is the same SWUi flags once you use phone or a future control).
 
-If the banner never arrives, you are in mock and the cart will not move. Fix wiring/port, restart the host.
+If the banner never arrives, that connect stays unlinked (the slot is not kept on a fresh failed open). The cart will not move. Fix wiring/port and connect again from the MC row. Mock runs only when you pick **Mock**, cancel the first dialog with nothing linked, or pass `--mock-on-fail`.
 
 ---
 
@@ -157,14 +157,16 @@ Defaults match a JKSlider Pico:
 
 | Role | GPIO | Wire |
 | --- | --- | --- |
-| UART0 TX | **16** | → SliderMC RX |
-| UART0 RX | **17** | ← SliderMC TX |
-| GND | — | Common with SliderMC |
+| UART0 TX | **16** | → first SliderMC RX |
+| UART0 RX | **17** | ← first SliderMC TX |
+| UART1 TX | **8** | → second SliderMC RX (optional; override in `SliderPins.py`) |
+| UART1 RX | **9** | ← second SliderMC TX. Not GP4 — that pin is the blue LED |
+| GND | — | Common with each SliderMC |
 | LED R / G / B | 2 / 3 / 4 | Status (active-high, common-cathode) |
 | Camera pulse | **15** | Optional shutter (OC active-low; Exposure time) |
 | Bloop pulse | **14** | Timeline marker pulse (push-pull; idle LOW, HIGH 100 ms) |
 
-UART baud **115200**. `UART_ID` 0.
+UART baud **115200**. UART0 is linked at boot so a phone has one controller. Add UART1 from the wide-window MC row (the picker lists UART0 / UART1, not COM ports). A wide browser on the Pico’s Wi-Fi gets the full UI with a limit of 2.
 
 Edit `SliderPins.py` if your PCB differs. Missing keys keep `SW_config` / `MC_config` defaults.
 

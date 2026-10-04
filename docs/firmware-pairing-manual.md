@@ -25,11 +25,17 @@ If your firmware uses another banner or binary frames, do not expect this GUI to
 
 ---
 
-## One MC
+## Several MCs
 
-One `MC_Client`, one UART. Rig JSON has `mc_id` and `slot` for a **future** multi-board map. Today only **slots 1–2** on **mc_id 1** are live. Axes 3–6 can exist as Timeline labels; they do not jog a second controller.
+Each linked board is its own slot: its own `MC_Client`, RX task, hello, and status. Axes inside a slot stay 1–6. `mc_id` on a command is the pool id. A missing `mc_id` still hits slot 1.
 
-A second SliderMC would need a second UART (or a mux) and host changes. Not implemented.
+| Host | Links |
+| --- | --- |
+| PC / Pi | Up to 8 USB serial ports |
+| Pico | UART0 (GP16/GP17) and UART1 (GP8/GP9 unless `SliderPins.py` overrides). GP4 is the blue LED |
+| Phone layout | Slot 1 only. No MC row, no Link switch, no Timeline |
+
+The desktop **Link** switch starts a path on every linked slot together (`PG` in one tight loop after each slot is armed). Jog, ENABLE, and A/B stay on the selected slot.
 
 ---
 

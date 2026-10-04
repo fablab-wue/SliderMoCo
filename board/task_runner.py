@@ -120,6 +120,8 @@ class TaskRunner:
         self._gen = 0
         self._idle = False
         self._im_last_ms = 0
+        self._pending_mc_id = None
+        self._pending_mc_ids = None
 
     def status_dict(self):
         a = self.active
@@ -139,12 +141,37 @@ class TaskRunner:
             out["frames"] = int(a["frames"])
         return out
 
+    def _active_ids(self):
+        a = self.active or {}
+        ids = a.get("mc_ids")
+        if not ids:
+            ids = getattr(self, "_pending_mc_ids", None)
+        if ids:
+            return list(ids)
+        return None
+
+    def _one_mc(self):
+        a = self.active or {}
+        if a.get("mc_id"):
+            return a.get("mc_id")
+        return getattr(self, "_pending_mc_id", None)
+
     def _write(self, line):
         p = self.panel
         if p is None:
             return False
+        text = str(line or "").strip()
+        cmd = text.split()[0].upper() if text else ""
+        ids = self._active_ids()
+        # One shutter line. Motion lines fan out when a linked task is armed.
+        if ids and cmd != "CT" and hasattr(p, "write_mc_ids"):
+            return p.write_mc_ids(text, ids)
+        mid = self._one_mc()
         if hasattr(p, "write_mc"):
-            return p.write_mc(line)
+            try:
+                return p.write_mc(text, mc_id=mid)
+            except TypeError:
+                return p.write_mc(text)
         return False
 
     def _camera(self):
@@ -195,8 +222,27 @@ class TaskRunner:
             return 2
         return 1
 
+    def _slot_of(self, sid):
+        p = self.panel
+        if p is None or not hasattr(p, "slot_by_id"):
+            return None
+        return p.slot_by_id(sid)
+
     def _path_samples(self):
         p = self.panel
+        a = self.active or {}
+        sid = None
+        ids = a.get("mc_ids") or getattr(self, "_pending_mc_ids", None)
+        if ids:
+            sid = ids[0]
+        elif a.get("mc_id") or getattr(self, "_pending_mc_id", None):
+            sid = a.get("mc_id") or getattr(self, "_pending_mc_id", None)
+        if sid is not None:
+            slot = self._slot_of(sid)
+            if slot is not None:
+                rows = slot.path_samples
+                if rows:
+                    return rows
         rows = getattr(p, "path_samples", None) if p is not None else None
         if not rows:
             return []
@@ -204,6 +250,20 @@ class TaskRunner:
 
     def _path_slice_us(self):
         p = self.panel
+        a = self.active or {}
+        sid = None
+        ids = a.get("mc_ids") or getattr(self, "_pending_mc_ids", None)
+        if ids:
+            sid = ids[0]
+        elif a.get("mc_id") or getattr(self, "_pending_mc_id", None):
+            sid = a.get("mc_id") or getattr(self, "_pending_mc_id", None)
+        if sid is not None:
+            slot = self._slot_of(sid)
+            if slot is not None:
+                try:
+                    return int(slot.path_slice_us or 0)
+                except (TypeError, ValueError):
+                    return 0
         if p is None:
             return 0
         try:
@@ -286,7 +346,109 @@ class TaskRunner:
         self.active = None
         self._idle = False
 
-    def start(self, line):
+    def _tag_active(self, mc_id, mc_ids):
+        a = self.active
+        if not a:
+            return
+        if mc_ids:
+            ids = []
+            for sid in mc_ids:
+                try:
+                    ids.append(int(sid))
+                except (TypeError, ValueError):
+                    pass
+            if ids:
+                a["mc_ids"] = ids
+                return
+        if mc_id is not None and mc_id != "":
+            try:
+                a["mc_id"] = int(mc_id)
+            except (TypeError, ValueError):
+                pass
+
+    def _pose_of_slot(self, slot):
+        n = 1
+        mc = slot.mc if slot is not None else None
+        if mc is not None and hasattr(mc, "getAxisCount"):
+            try:
+                n = int(mc.getAxisCount() or 1)
+            except (TypeError, ValueError):
+                n = 1
+        if n < 1:
+            n = 1
+        if n > 6:
+            n = 6
+        act = slot._act if slot is not None else {}
+        out = []
+        i = 1
+        while i <= n:
+            suf = "" if i == 1 else str(i)
+            v = act.get("pos" + suf)
+            try:
+                out.append(float(v) if v is not None else 0.0)
+            except (TypeError, ValueError):
+                out.append(0.0)
+            i += 1
+        return out
+
+    def _copy_rows(self, rows):
+        copied = []
+        i = 0
+        while i < len(rows or []):
+            row = rows[i]
+            if isinstance(row, (list, tuple)):
+                copied.append(list(row))
+            else:
+                try:
+                    copied.append([int(row)])
+                except (TypeError, ValueError):
+                    copied.append([0])
+            i += 1
+        return copied
+
+    def _capture_banks(self):
+        a = self.active
+        if not a or not a.get("mc_ids"):
+            return
+        banks = {}
+        for sid in a["mc_ids"]:
+            slot = self._slot_of(sid)
+            rows = []
+            if slot is not None:
+                rows = self._copy_rows(slot.path_samples)
+            banks[sid] = {
+                "samples": rows,
+                "start": self._pose_of_slot(slot) if slot is not None else [],
+            }
+        a["banks"] = banks
+
+    def _integrate_pose(self, start, samples, hops):
+        pose = list(start or [])
+        n = int(hops)
+        if n < 0:
+            n = 0
+        if n > len(samples or []):
+            n = len(samples)
+        i = 0
+        while i < n:
+            row = samples[i]
+            j = 0
+            while j < len(pose):
+                d = 0
+                if isinstance(row, (list, tuple)):
+                    if j < len(row):
+                        d = row[j]
+                elif j == 0:
+                    d = row
+                try:
+                    pose[j] = float(pose[j]) + float(d) / 1000.0
+                except (TypeError, ValueError):
+                    pass
+                j += 1
+            i += 1
+        return pose
+
+    def start(self, line, mc_id=None, mc_ids=None):
         """Parse and latch a task line. Replaces any running task. Returns True/False."""
         line = str(line or "").strip()
         if not line:
@@ -305,20 +467,31 @@ class TaskRunner:
         if self.active:
             self.cancel("replace")
         self._gen = (self._gen + 1) & 0xFFFF
+        self._pending_mc_id = mc_id
+        self._pending_mc_ids = mc_ids
+        ok = False
         if name == "TSK_PPM":
-            return self._start_ppm(args)
-        if name == "TSK_TL_CONT":
-            return self._start_tl_cont(args)
-        if name == "TSK_TL_MSM":
-            return self._start_tl_msm(args)
-        if name == "TSK_TL_STEP":
-            return self._start_tl_step(args)
-        if name == "TSK_TL_PATH_CONT":
-            return self._start_tl_path_cont(args)
-        if name == "TSK_TL_PATH_MSM":
-            return self._start_tl_path_msm(args)
-        dbg(2, "task unhandled", name)
-        return False
+            ok = self._start_ppm(args)
+        elif name == "TSK_TL_CONT":
+            ok = self._start_tl_cont(args)
+        elif name == "TSK_TL_MSM":
+            ok = self._start_tl_msm(args)
+        elif name == "TSK_TL_STEP":
+            ok = self._start_tl_step(args)
+        elif name == "TSK_TL_PATH_CONT":
+            ok = self._start_tl_path_cont(args)
+        elif name == "TSK_TL_PATH_MSM":
+            ok = self._start_tl_path_msm(args)
+        else:
+            dbg(2, "task unhandled", name)
+            ok = False
+        self._pending_mc_id = None
+        self._pending_mc_ids = None
+        if ok:
+            self._tag_active(mc_id, mc_ids)
+            if name == "TSK_TL_PATH_MSM":
+                self._capture_banks()
+        return ok
 
     def _drop_axis2(self, p2):
         if self._axis_count() < 2:
@@ -876,7 +1049,32 @@ class TaskRunner:
         n = int(a.get("frames") or 0)
         a["detail"] = "frame %d/%d" % (k, n)
 
+    def _all_targets_idle(self, ids):
+        i = 0
+        while i < len(ids):
+            slot = self._slot_of(ids[i])
+            i += 1
+            if slot is None:
+                continue
+            st = (slot._act or {}).get("state")
+            if st in ("M", "A", "B", "P", "H"):
+                return False
+            mc = slot.mc
+            if mc is None:
+                continue
+            if getattr(mc, "_path_on", False):
+                return False
+            try:
+                if mc.isMoving() or mc.isHoming():
+                    return False
+            except Exception:
+                pass
+        return True
+
     def _is_idle_now(self):
+        ids = self._active_ids()
+        if ids:
+            return self._all_targets_idle(ids)
         if self._idle:
             return True
         p = self.panel
@@ -1036,7 +1234,27 @@ class TaskRunner:
             k = int(a.get("frame") or 0) + 1
             a["frame"] = k
             self._msm_set_frame_detail()
-            if a.get("name") == "TSK_TL_PATH_MSM":
+            wrote = False
+            if a.get("name") == "TSK_TL_PATH_MSM" and a.get("banks"):
+                poses = None
+                line = None
+                p1 = None
+                p2 = None
+                wrote = True
+                for sid in a.get("mc_ids") or []:
+                    bank = a["banks"].get(sid)
+                    if not bank:
+                        continue
+                    pose = self._integrate_pose(bank.get("start"), bank.get("samples"), k)
+                    one = _mt_packed(pose)
+                    if poses is None:
+                        poses = pose
+                        p1 = pose[0] if pose else None
+                        p2 = pose[1] if pose and len(pose) > 1 else None
+                    if one and self.panel is not None:
+                        self.panel.write_mc(one, mc_id=sid)
+                        line = one
+            elif a.get("name") == "TSK_TL_PATH_MSM":
                 poses = self._path_msm_pose(k)
                 line = _mt_packed(poses)
                 p1 = poses[0] if poses else None
@@ -1050,7 +1268,11 @@ class TaskRunner:
             self._idle = False
             self._im_last_ms = 0
             a["detail"] = _moving_phrase(p1, p2)
-            if line:
+            if wrote:
+                if not line:
+                    a["saw_motion"] = True
+                    self._idle = True
+            elif line:
                 self._write(line)
             else:
                 a["saw_motion"] = True

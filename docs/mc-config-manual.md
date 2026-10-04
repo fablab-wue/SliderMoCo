@@ -2,7 +2,7 @@
 
 MC Config is a **dialog** that reads and writes SliderMC persistent keys (`CG` / `CS`). It is not the [Project & rig](config-manual.md) dialog and not the browser rig JSON.
 
-On desktop it is **MC Config** in the top bar (before Config). On a phone it is the gear tab, then **MC Config**.
+On desktop it is **MC Config** in the top bar (after the MC buttons, before Config). It reads and writes the **selected** controller. On a phone it is the gear tab, then **MC Config**, and that is slot 1.
 
 Wire names stay firmware-canonical (`CS MOTOR_1_min 0`). The grid shows shorter labels; the real key is in the field tooltip and in the status line on error.
 

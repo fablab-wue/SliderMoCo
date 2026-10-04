@@ -28,6 +28,15 @@
   var lastPhone = null;
   var lastHello = null;
   var serialDlgOpened = false;
+  var mcSlots = {};
+  var mcOrder = [];
+  var selectedMcId = null;
+  var mcLimit = 8;
+  var hostKind = "";
+  var serialMode = "add";
+  var serialEditId = null;
+  var projectFileName = (project && project.file_name) || "";
+  var savedMcBundle = (project && project.mc_bundle) || null;
   var mtTimer = 0;
   var pathBufferSize = 32000;
   var playing = false;
@@ -38,6 +47,7 @@
   var playEndT = 0;
   var playLastT = 0;
   var preroll = null;
+  var pathArm = null;
   var silentSeek = null;
   var motorsOnTimeline = false;
   var audioCtx = null;
@@ -55,12 +65,311 @@
   }
 
   function send(obj) {
+    if (obj && typeof obj.task === "string" && obj.mc_id == null && obj.mc_ids == null) {
+      var ids = linkOn() ? linkedIds() : [];
+      if (ids.length > 1) obj.mc_ids = ids;
+      else if (ids.length === 1) obj.mc_id = ids[0];
+      else if (selectedMcId) obj.mc_id = selectedMcId;
+    }
     if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj));
   }
   window.__shSend = send;
+  function sendMcTo(id, line, silent) {
+    var msg = { mc: line };
+    if (id) msg.mc_id = id;
+    if (silent) msg.silent = true;
+    send(msg);
+  }
   function sendMc(line, silent) {
-    if (silent) send({ mc: line, silent: true });
-    else send({ mc: line });
+    sendMcTo(selectedMcId, line, silent);
+  }
+
+  function linkOn() {
+    var el = $("mcLink");
+    return !!(el && el.checked);
+  }
+
+  function linkedIds() {
+    if (!linkOn()) return selectedMcId ? [selectedMcId] : [];
+    var out = [];
+    mcOrder.forEach(function (id) {
+      var s = mcSlots[id];
+      if (s && (s.linked || s.sim)) out.push(id);
+    });
+    if (!out.length && selectedMcId) out.push(selectedMcId);
+    return out;
+  }
+
+  function cloneJson(o) {
+    try { return JSON.parse(JSON.stringify(o)); } catch (e) { return o; }
+  }
+
+  function emptyMarks() {
+    return { a: null, b: null, c: null, d: null, e: null, f: null, g: null, h: null };
+  }
+
+  function stashSelected() {
+    var s = selectedMcId ? mcSlots[selectedMcId] : null;
+    if (!s) return;
+    if (editor) {
+      s.lanes = editor.lanes;
+      s.visible = cloneJson(editor.visible || {});
+      s.locked = cloneJson(editor.locked || {});
+    }
+    if (window.SWUi && typeof SWUi.getMarks === "function") s.marks = SWUi.getMarks();
+    s.session = { ss: cmdSpd, sa: cmdAcc, decel: cmdDec };
+  }
+
+  function loadSlotLanes(id) {
+    var s = mcSlots[id];
+    if (!s || !editor) return;
+    if (!s.lanes) s.lanes = cloneJson(editor.lanes);
+    editor.setLanes(s.lanes);
+    if (s.visible) {
+      Object.keys(s.visible).forEach(function (k) {
+        editor.visible[k] = s.visible[k];
+      });
+    }
+    if (s.locked) {
+      Object.keys(s.locked).forEach(function (k) {
+        editor.locked[k] = s.locked[k];
+      });
+    }
+    if (typeof editor._tracks === "function") editor._tracks();
+    if (window.SWUi && typeof SWUi.setMarks === "function") {
+      SWUi.setMarks(s.marks || emptyMarks());
+      if (typeof fillAbDlg === "function") fillAbDlg();
+    }
+    if (s.session) {
+      if (s.session.ss != null) cmdSpd = Number(s.session.ss);
+      if (s.session.sa != null) cmdAcc = Number(s.session.sa);
+      if (s.session.decel != null) cmdDec = Number(s.session.decel);
+      syncSsSaUi();
+    }
+    editor.draw();
+  }
+
+  function bundleByPort(port) {
+    var list = savedMcBundle && savedMcBundle.slots;
+    if (!port || !list) return null;
+    var i;
+    for (i = 0; i < list.length; i++) {
+      if (list[i] && list[i].port === port) return list[i];
+    }
+    return null;
+  }
+
+  function ensureMcSlot(pub) {
+    var id = Number(pub.id);
+    var s = mcSlots[id];
+    if (!s) {
+      s = { id: id, lanes: null, marks: null, visible: null, locked: null, session: null };
+      var saved = bundleByPort(pub.port);
+      if (saved) {
+        s.lanes = saved.lanes || null;
+        s.marks = saved.marks || null;
+        s.visible = saved.visible || null;
+        s.locked = saved.locked || null;
+        s.session = saved.session || null;
+      }
+      mcSlots[id] = s;
+    }
+    s.port = pub.port || "";
+    s.name = pub.name || "";
+    s.linked = !!(pub.linked || pub.sim);
+    s.sim = !!pub.sim;
+    s.lost = !!pub.lost;
+    s.failed = !!pub.failed;
+    s.axes = pub.axes || [];
+    s.config = pub.config || null;
+    s.soft = pub.soft || null;
+    s.sessionLive = pub.session || null;
+    s.state = pub.state || "?";
+    s.line1 = pub.line1 || "";
+    s.mc_name = pub.mc_name || "";
+    if (!s.session && pub.session) s.session = cloneJson(pub.session);
+    if (mcOrder.indexOf(id) < 0) mcOrder.push(id);
+    return s;
+  }
+
+  function mcButtonLabel(id) {
+    var s = mcSlots[id];
+    var name = s && s.name && String(s.name).trim();
+    if (name && name !== "SliderMoCo" && name !== "SliderMoCo mock" && name !== "Simulator") return name;
+    var n = mcOrder.indexOf(id);
+    return String(n < 0 ? 1 : n + 1);
+  }
+
+  function showMcUi() {
+    if (window.SHLayout && SHLayout.phoneMode && SHLayout.phoneMode()) return false;
+    return hostKind === "desktop" || hostKind === "pico" || isDesktopHost();
+  }
+
+  function renderMcBar() {
+    var bar = $("mcBar");
+    if (!bar) return;
+    var on = showMcUi();
+    bar.hidden = !on;
+    var serialBtn = $("btnSerial");
+    if (serialBtn) serialBtn.classList.toggle("hidden", on || !isDesktopHost());
+    if (!on) return;
+    bar.innerHTML = "";
+    mcOrder.forEach(function (id) {
+      var s = mcSlots[id];
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "btn ghost sm mc-btn";
+      if (s && s.lost) btn.classList.add("lost");
+      else if (s && s.failed) btn.classList.add("fail");
+      btn.setAttribute("aria-pressed", id === selectedMcId ? "true" : "false");
+      btn.textContent = mcButtonLabel(id);
+      btn.title = (s && s.failed)
+        ? ((s.port || "MC") + " — connect failed")
+        : ((s && (s.mc_name || s.port)) || "MC");
+      btn.onclick = function () { selectMc(id); };
+      btn.oncontextmenu = function (ev) {
+        ev.preventDefault();
+        openSerialDlg("edit", id);
+      };
+      bar.appendChild(btn);
+    });
+    if (mcOrder.length < mcLimit) {
+      var add = document.createElement("button");
+      add.type = "button";
+      add.className = "btn ghost sm mc-btn";
+      add.textContent = "+";
+      add.title = "Add MC";
+      add.onclick = function () { openSerialDlg("add"); };
+      bar.appendChild(add);
+    }
+  }
+
+  function viewFromSlot(msg, pub) {
+    return {
+      t: msg.t,
+      axes: pub.axes || [],
+      session: pub.session || null,
+      linked: !!(pub.linked || pub.sim),
+      sim: !!pub.sim,
+      lost: !!pub.lost,
+      config: pub.config || null,
+      soft: pub.soft || null,
+      state: pub.state || "?",
+      line1: pub.line1 || "",
+      line2: "",
+      warn: false,
+      enabled: pub.enabled,
+      mc_name: pub.mc_name || pub.name || "",
+      serial_port: pub.port || "",
+      link_reason: pub.link_reason || "",
+      task: msg.task,
+      wifi: msg.wifi,
+      host: msg.host,
+      mc_limit: msg.mc_limit,
+      ax: msg.ax
+    };
+  }
+
+  function takeMcFrame(msg) {
+    if (!msg || !Array.isArray(msg.mcs)) return msg;
+    if (msg.mc_limit) mcLimit = Number(msg.mc_limit) || mcLimit;
+    if (msg.host) hostKind = String(msg.host);
+    var seen = {};
+    var order = [];
+    msg.mcs.forEach(function (pub) {
+      if (!pub || pub.id == null) return;
+      var id = Number(pub.id);
+      ensureMcSlot(pub);
+      seen[id] = true;
+      order.push(id);
+    });
+    mcOrder = order;
+    Object.keys(mcSlots).forEach(function (k) {
+      if (!seen[Number(k)]) delete mcSlots[k];
+    });
+    if (selectedMcId == null || !mcSlots[selectedMcId]) {
+      var pick = null;
+      if (savedMcBundle && savedMcBundle.selected_port) {
+        order.forEach(function (id) {
+          if (!pick && mcSlots[id] && mcSlots[id].port === savedMcBundle.selected_port) pick = id;
+        });
+      }
+      selectedMcId = pick || (order.length ? order[0] : null);
+      if (selectedMcId && editor) loadSlotLanes(selectedMcId);
+    }
+    var sel = selectedMcId ? null : null;
+    msg.mcs.forEach(function (pub) {
+      if (Number(pub.id) === selectedMcId) sel = pub;
+    });
+    renderMcBar();
+    if (!sel) return msg;
+    return viewFromSlot(msg, sel);
+  }
+
+  function selectMc(id) {
+    id = Number(id);
+    if (!mcSlots[id] || id === selectedMcId) {
+      renderMcBar();
+      return;
+    }
+    stashSelected();
+    selectedMcId = id;
+    loadSlotLanes(id);
+    var s = mcSlots[id];
+    var fake = viewFromSlot({ t: "hello", wifi: lastHello && lastHello.wifi, host: hostKind, mc_limit: mcLimit, mcs: [] }, {
+      axes: s.axes,
+      session: s.sessionLive || s.session,
+      linked: s.linked,
+      sim: s.sim,
+      lost: s.lost,
+      config: s.config,
+      soft: s.soft,
+      state: s.state,
+      line1: s.line1,
+      mc_name: s.mc_name,
+      name: s.name,
+      port: s.port,
+      enabled: s.sessionLive && s.sessionLive.enabled
+    });
+    lastHello = fake;
+    lastStatus = fake;
+    applyHello(fake);
+    applyStatus(fake);
+    renderMcBar();
+    saveTimeline();
+  }
+
+  function withSlotLanes(id, fn) {
+    if (!editor || id === selectedMcId || !mcSlots[id]) return fn();
+    var s = mcSlots[id];
+    if (!s.lanes) s.lanes = cloneJson(editor.lanes);
+    var prevLanes = editor.lanes;
+    var prevHello = lastHello;
+    var prevStatus = lastStatus;
+    var view = {
+      axes: s.axes || [],
+      config: s.config,
+      linked: s.linked,
+      sim: s.sim,
+      session: s.sessionLive,
+      state: s.state,
+      soft: s.soft
+    };
+    editor.lanes = s.lanes || prevLanes;
+    lastHello = view;
+    lastStatus = view;
+    try { return fn(); }
+    finally {
+      editor.lanes = prevLanes;
+      lastHello = prevHello;
+      lastStatus = prevStatus;
+    }
+  }
+
+  function slotBusy(id) {
+    var s = mcSlots[id];
+    var st = s ? s.state : "?";
+    return st === "M" || st === "P" || st === "A" || st === "B" || st === "H";
   }
 
   function playheadFps() {
@@ -163,6 +472,7 @@
   }
 
   function setPlayheadPreview(t) {
+    if (pathMotionLocked()) return;
     if (!editor) return;
     t = editor.clampT(t);
     editor.playhead = t;
@@ -317,6 +627,7 @@
 
   function applyHello(h) {
     if (!h) return;
+    h = takeMcFrame(h) || h;
     lastHello = h;
     if (h.axes && h.axes.length) {
       if (!lastStatus || typeof lastStatus !== "object") lastStatus = {};
@@ -542,14 +853,15 @@
         editor.draw();
       };
     }
-    function jumpLane(dir, seek) {
+    function jumpLane(dir, seek, slow) {
+      if (pathMotionLocked()) return;
       if (!editor) return;
       var oldT = editor.playhead;
       if (!editor.jumpLaneKey(id, dir)) return;
       var t = editor.playhead;
       syncPlayheadReadout(t);
       syncCtrlReadouts();
-      if (seek) seekPlayheadMotors(oldT, t);
+      if (seek) seekPlayheadMotors(oldT, t, { slow: !!slow });
     }
     function bindJump(el, dir) {
       if (!el) return;
@@ -561,7 +873,7 @@
       el.addEventListener("contextmenu", function (ev) {
         ev.preventDefault();
         ev.stopPropagation();
-        jumpLane(dir, true);
+        jumpLane(dir, true, ev.altKey);
       });
     }
     bindJump(row.querySelector(".js-ctrl-prev"), -1);
@@ -686,10 +998,10 @@
     var fromRev = document.querySelector(".js-ctrl-play-from-rev");
     var start = document.querySelector(".js-ctrl-to-start");
     var end = document.querySelector(".js-ctrl-to-end");
-    if (play) play.onclick = function () { if (mcIdle()) playGraph("fwd"); };
-    if (rev) rev.onclick = function () { if (mcIdle()) playGraph("rev"); };
-    if (from) from.onclick = function () { if (mcIdle()) playGraph("from"); };
-    if (fromRev) fromRev.onclick = function () { if (mcIdle()) playGraph("fromRev"); };
+    if (play) play.onclick = function (ev) { playGraph("fwd", { slow: !!ev.altKey }); };
+    if (rev) rev.onclick = function (ev) { playGraph("rev", { slow: !!ev.altKey }); };
+    if (from) from.onclick = function (ev) { playGraph("from", { slow: !!ev.altKey }); };
+    if (fromRev) fromRev.onclick = function (ev) { playGraph("fromRev", { slow: !!ev.altKey }); };
     if (start) {
       start.onclick = function () {
         if (!editor) return;
@@ -711,14 +1023,15 @@
         seekAtMax(editor.poseAt(t));
       };
     }
-    function jumpVisibleKey(dir, seek) {
+    function jumpVisibleKey(dir, seek, slow) {
+      if (pathMotionLocked()) return;
       if (!editor) return;
       var oldT = editor.playhead;
       if (!editor.jumpVisibleKey(dir)) return;
       var t = editor.playhead;
       syncPlayheadReadout(t);
       syncCtrlReadouts();
-      if (seek) seekPlayheadMotors(oldT, t);
+      if (seek) seekPlayheadMotors(oldT, t, { slow: !!slow });
     }
     function bindJumpAll(el, dir) {
       if (!el) return;
@@ -728,7 +1041,7 @@
       });
       el.addEventListener("contextmenu", function (ev) {
         ev.preventDefault();
-        jumpVisibleKey(dir, true);
+        jumpVisibleKey(dir, true, ev.altKey);
       });
     }
     bindJumpAll(document.querySelector(".js-ctrl-prev-all"), -1);
@@ -1009,7 +1322,7 @@
   }
 
   function applyStatus(s) {
-    s = s || {};
+    s = takeMcFrame(s || {}) || {};
     var incoming = s.axes || [];
     var prev = liveAxes();
     if (incoming.length && prev.length && incoming.length < prev.length) {
@@ -1046,14 +1359,8 @@
       editor.draw();
     }
     if (silentSeek && silentSeek.armed && !mcBusy()) finishSilentSeek();
-    if (preroll && preroll.seeking && !mcBusy()) {
-      preroll.seeking = false;
-      preroll.timer = setTimeout(function () {
-        var fn = preroll && preroll.then;
-        preroll = null;
-        if (fn) fn();
-      }, 1000);
-    }
+    notePreroll();
+    notePathArm(s.state);
     syncMcLinkBanner(s);
     syncLimitBtns();
   }
@@ -1089,7 +1396,7 @@
     var host = isDesktopHost(d);
     if (off) off.classList.toggle("host-serial", host);
     if (!btn) return;
-    btn.classList.toggle("hidden", !host);
+    btn.classList.toggle("hidden", !host || showMcUi());
     if (!host) return;
     var label = serialPortLabel(d);
     btn.textContent = label;
@@ -1159,23 +1466,41 @@
     });
   }
 
-  function openSerialDlg() {
+  function openSerialDlg(mode, mcId) {
     var dlg = $("serialDlg");
     if (!dlg || !dlg.showModal) return;
+    serialMode = mode === "edit" ? "edit" : "add";
+    serialEditId = serialMode === "edit" ? Number(mcId) : null;
+    var hint = $("serialHint");
+    if (hint) {
+      hint.textContent = serialMode === "edit"
+        ? "Change the port for this MC, or disconnect it."
+        : (hostKind === "pico"
+          ? "Choose UART0 or UART1. If the connect fails, that button stays yellow."
+          : "Choose a port. If the connect fails, that button stays yellow.");
+    }
+    if ($("serialMock")) $("serialMock").classList.toggle("hidden", serialMode !== "add" || hostKind === "pico");
+    if ($("serialDisconnect")) $("serialDisconnect").classList.toggle("hidden", serialMode !== "edit");
+    if ($("serialRemove")) $("serialRemove").classList.toggle("hidden", serialMode !== "edit");
     serialSetErr("");
     serialLoadList();
     if (!dlg.open) dlg.showModal();
   }
 
   function maybeOpenSerialDlg(d) {
-    if (!isDesktopHost(d)) return;
-    if (d && (d.sim || d.linked)) {
+    if (window.SHLayout && SHLayout.phoneMode && SHLayout.phoneMode()) return;
+    if (hostKind !== "desktop" && hostKind !== "pico" && !isDesktopHost(d)) return;
+    if (mcOrder.length) {
+      serialDlgOpened = true;
+      return;
+    }
+    if (d && (d.sim || d.linked) && !Array.isArray(d.mcs)) {
       serialDlgOpened = true;
       return;
     }
     if (serialDlgOpened) return;
     serialDlgOpened = true;
-    openSerialDlg();
+    openSerialDlg("add");
   }
 
   function serialBusy(on) {
@@ -1185,16 +1510,41 @@
     });
   }
 
+  function serialAction(action, mcId) {
+    serialBusy(true);
+    serialSetErr(action === "remove" ? "Removing…" : "Disconnecting…");
+    return fetch("/api/serial", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: action, mc_id: mcId, port: "" })
+    }).then(function (r) { return r.json(); }).then(function (info) {
+      serialBusy(false);
+      if (info && info.ok) {
+        var dlg = $("serialDlg");
+        if (dlg && dlg.open) dlg.close();
+        if (action === "remove" && selectedMcId === mcId) selectedMcId = null;
+        return info;
+      }
+      serialSetErr((info && info.error) || "Failed");
+      return info;
+    }).catch(function (err) {
+      serialBusy(false);
+      serialSetErr((err && err.message) || "Failed");
+    });
+  }
+
   function serialPost(port) {
     serialBusy(true);
     serialSetErr(port === "mock" ? "Starting mock…" : "Connecting…");
     try { cancelTimelinePlay(); } catch (e) {}
     try { cancelAbcLoop(); } catch (e) {}
     sendMc("MS");
+    var body = { port: port, action: "connect" };
+    if (serialMode === "edit" && serialEditId) body.mc_id = serialEditId;
     return fetch("/api/serial", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ port: port })
+      body: JSON.stringify(body)
     }).then(function (r) {
       return r.json().then(function (info) {
         info = info || {};
@@ -1208,6 +1558,7 @@
         var dlg = $("serialDlg");
         if (dlg && dlg.open) dlg.close();
         syncSerialCaption(info);
+        if (info.mc_id) selectedMcId = Number(info.mc_id);
         return info;
       }
       serialFillPorts(info);
@@ -1254,6 +1605,18 @@
       };
     }
     if ($("serialMock")) $("serialMock").onclick = function () { serialPost("mock"); };
+    if ($("serialDisconnect")) {
+      $("serialDisconnect").onclick = function () {
+        if (!serialEditId) return;
+        serialAction("disconnect", serialEditId);
+      };
+    }
+    if ($("serialRemove")) {
+      $("serialRemove").onclick = function () {
+        if (!serialEditId) return;
+        serialAction("remove", serialEditId);
+      };
+    }
     if ($("serialCancel")) {
       $("serialCancel").onclick = function () {
         var linked = (lastHello && (lastHello.linked || lastHello.sim)) ||
@@ -1370,12 +1733,19 @@
   }
 
   function mcBusy() {
+    if (linkOn()) {
+      var ids = linkedIds();
+      var i;
+      for (i = 0; i < ids.length; i++) if (slotBusy(ids[i])) return true;
+      return false;
+    }
     var st = lastStatus && lastStatus.state;
     return st === "M" || st === "P" || st === "A" || st === "B" || st === "H";
   }
 
   function mcIdle() {
     if (playing) return false;
+    if (linkOn()) return !mcBusy();
     var st = (lastStatus && lastStatus.state) || "?";
     return st === "I" || st === "D" || st === "?";
   }
@@ -1547,6 +1917,50 @@
     if (cb) cb();
   }
 
+  function seekCurrentMax(id, pose) {
+    var mx = envelopeMax();
+    sendMcTo(id, "SS " + mx.spd.toFixed(3), true);
+    sendMcTo(id, "SA " + mx.acc.toFixed(3) + " " + mx.acc.toFixed(3), true);
+    sendMcTo(id, "SE 1");
+    var line = poseLine(pose);
+    if (line) sendMcTo(id, line);
+  }
+
+  function fanSeekTime(t) {
+    linkedIds().forEach(function (id) {
+      withSlotLanes(id, function () {
+        seekCurrentMax(id, editor.poseAt(t));
+      });
+    });
+    motorsOnTimeline = true;
+    window.__shSilentSsSa = true;
+  }
+
+  function fanPath(fromT, toT, opts) {
+    opts = opts || {};
+    var packs = [];
+    linkedIds().forEach(function (id) {
+      var samples = withSlotLanes(id, function () {
+        return sampleDeltas(fromT, toT, opts.hz);
+      });
+      if (samples && samples.length) packs.push({ id: id, samples: samples });
+    });
+    if (!packs.length) return false;
+    var ids = [];
+    packs.forEach(function (p) {
+      ids.push(p.id);
+      sendPath(p.samples, null, {
+        hz: opts.hz,
+        sliceUs: opts.sliceUs,
+        mcId: p.id,
+        sync: true,
+        go: false
+      });
+    });
+    if (opts.release !== false) send({ path: { cmd: "release", mc_ids: ids } });
+    return packs[0].samples;
+  }
+
   function seekAtMax(pose) {
     var mx = envelopeMax();
     sendMc("SS " + mx.spd.toFixed(3), true);
@@ -1608,24 +2022,178 @@
     syncPlayheadReadout(t);
     syncCtrlReadouts();
     smSyncFromPlayhead(t);
-    var line = poseLine(editor.poseAt(t));
-    if (line) {
-      sendMc("SE 1");
-      sendMc(line);
+    if (linkOn()) {
+      linkedIds().forEach(function (id) {
+        withSlotLanes(id, function () {
+          var line = poseLine(editor.poseAt(t));
+          if (line) {
+            sendMcTo(id, "SE 1");
+            sendMcTo(id, line);
+          }
+        });
+      });
+    } else {
+      var line = poseLine(editor.poseAt(t));
+      if (line) {
+        sendMc("SE 1");
+        sendMc(line);
+      }
     }
     motorsOnTimeline = true;
   }
 
-  function playBetween(fromT, toT) {
+  function pathMotionLocked() {
+    return !!(playing || preroll || pathArm);
+  }
+
+  function syncPathLock() {
+    if (editor) editor.pathLocked = pathMotionLocked();
+  }
+
+  function pathHz() {
+    return (editor && editor.playHz) || 50;
+  }
+
+  function clearPrerollTimer() {
+    if (preroll && preroll.timer) {
+      clearTimeout(preroll.timer);
+      preroll.timer = 0;
+    }
+  }
+
+  function beginPreroll(target, thenFn) {
+    clearPrerollTimer();
+    preroll = {
+      seeking: true,
+      sawBusy: false,
+      settle: false,
+      target: target,
+      then: thenFn,
+      timer: 0
+    };
+    syncPathLock();
+  }
+
+  function notePreroll() {
+    if (!preroll || !preroll.seeking) return;
+    if (mcBusy()) {
+      preroll.sawBusy = true;
+      if (preroll.settle) {
+        preroll.settle = false;
+        clearPrerollTimer();
+      }
+      return;
+    }
+    var onTarget = preroll.target ? !poseOffEndpoint(preroll.target) : false;
+    if (!preroll.sawBusy && !onTarget) return;
+    if (preroll.settle) return;
+    preroll.settle = true;
+    clearPrerollTimer();
+    preroll.timer = setTimeout(function () {
+      if (!preroll || !preroll.settle) return;
+      var fn = preroll.then;
+      preroll = null;
+      syncPathLock();
+      if (fn) fn();
+    }, 200);
+  }
+
+  function notePathArm(state) {
+    if (!pathArm) return;
+    if (!pathArm.started) {
+      if (state === "P") {
+        pathArm.started = true;
+        startPlayClock(pathArm.fromT, pathArm.toT, pathArm.dir, pathArm.wallSec, {
+          pathSeek: pathArm.pathSeek
+        });
+      }
+      return;
+    }
+    if (playing && state && state !== "P" && state !== "T") completePlayClock();
+  }
+
+  function armPath(samples, fromT, toT, dir, opts) {
+    opts = opts || {};
+    var hz = Number(opts.hz);
+    if (!(hz > 0)) hz = pathHz();
+    var scale = opts.slow ? 5 : 1;
+    var sliceUs = Math.round(1e6 / hz) * scale;
+    sendPath(samples, null, { hz: hz, sliceUs: sliceUs });
+    pathArm = {
+      fromT: fromT,
+      toT: toT,
+      dir: dir,
+      wallSec: (samples.length / hz) * scale,
+      pathSeek: !!opts.pathSeek,
+      started: false
+    };
+    motorsOnTimeline = true;
+    syncPathLock();
+  }
+
+  function completePlayClock() {
+    if (!playing && !pathArm) return;
+    var arm = pathArm;
+    var pathSeek = !!(arm && arm.pathSeek);
+    var toT = arm ? arm.toT : playEndT;
+    var dir = arm ? arm.dir : playDir;
+    var wasPlaying = playing;
+    var last = playLastT;
+    pathArm = null;
+    playing = false;
+    if (playRaf) {
+      cancelAnimationFrame(playRaf);
+      playRaf = 0;
+    }
+    if (wasPlaying) fireMarkersCrossing(last, toT, dir);
+    if (editor) {
+      editor.playing = false;
+      if (pathSeek) editor.pathHead = null;
+      else editor.playhead = toT;
+      editor.draw();
+    }
+    if (!pathSeek) syncPlayheadReadout(toT);
+    syncCtrlPlayBtns();
+    syncPathLock();
+    if (pathSeek) mtToTime(toT);
+  }
+
+  function playBetween(fromT, toT, opts) {
     if (!editor) return false;
+    opts = opts || {};
     fromT = editor.clampT(fromT);
     toT = editor.clampT(toT);
     if (Math.abs(toT - fromT) < 1e-6) return true;
     if (editor.hasLimitViolation()) return false;
     var dir = toT >= fromT ? 1 : -1;
-    var wasPlaying = playing;
+    var wasMoving = playing || !!pathArm;
     cancelTimelinePlay();
-    if (wasPlaying) sendMc("MS");
+    if (wasMoving) {
+      if (linkOn()) send({ mc: "MS", all: true });
+      else sendMc("MS");
+    }
+    if (linkOn()) {
+      var got = fanPath(fromT, toT, { sliceUs: opts.slow ? Math.round(1e6 / pathHz()) * 5 : null });
+      if (!got) return false;
+      editor.playhead = toT;
+      editor.pathHead = fromT;
+      editor.draw();
+      syncPlayheadReadout(toT);
+      syncCtrlReadouts();
+      smSyncFromPlayhead(toT);
+      var scale = opts.slow ? 5 : 1;
+      pathArm = {
+        fromT: fromT,
+        toT: toT,
+        dir: dir,
+        wallSec: (got.length / pathHz()) * scale,
+        pathSeek: true,
+        started: false
+      };
+      motorsOnTimeline = true;
+      syncPathLock();
+      return true;
+    }
     var samples = sampleDeltas(fromT, toT);
     if (!samples || !samples.length) return false;
     nudgePathToLive(samples, fromT, toT);
@@ -1636,15 +2204,12 @@
     syncCtrlReadouts();
     smSyncFromPlayhead(toT);
     sendMc("SE 1");
-    sendPath(samples, function () {
-      var hz = (editor && editor.playHz) || 50;
-      startPlayClock(fromT, toT, dir, samples.length / hz, { pathSeek: true });
-    });
-    motorsOnTimeline = true;
+    armPath(samples, fromT, toT, dir, { slow: !!opts.slow, pathSeek: true });
     return true;
   }
 
   function seekPlayheadMotors(oldT, newT, opts) {
+    if (pathMotionLocked()) return;
     if (!editor) return;
     opts = opts || {};
     newT = editor.clampT(newT);
@@ -1658,14 +2223,15 @@
       return;
     }
     var usePath = followOn() || !!opts.ctrl;
-    if (usePath && (motorsOnTimeline || onCurveAt(oldT)) && playBetween(oldT, newT)) return;
+    if (usePath && (motorsOnTimeline || onCurveAt(oldT)) && playBetween(oldT, newT, { slow: !!opts.slow })) return;
     mtToTime(newT);
   }
 
   function onPlayhead(t, commit, force, extra) {
     extra = extra || {};
+    if (pathMotionLocked()) return;
     if (commit && extra.seekMotors) {
-      seekPlayheadMotors(extra.oldT != null ? extra.oldT : t, t, { ctrl: !!extra.ctrl });
+      seekPlayheadMotors(extra.oldT != null ? extra.oldT : t, t, { ctrl: !!extra.ctrl, slow: !!extra.slow });
       return;
     }
     syncPlayheadReadout(t);
@@ -1727,9 +2293,10 @@
 
   function cancelTimelinePlay() {
     if (preroll) {
-      if (preroll.timer) clearTimeout(preroll.timer);
+      clearPrerollTimer();
       preroll = null;
     }
+    pathArm = null;
     if (silentSeek) finishSilentSeek();
     playing = false;
     if (editor) {
@@ -1743,6 +2310,7 @@
     }
     if (editor) editor.draw();
     syncCtrlPlayBtns();
+    syncPathLock();
   }
   window.__shCancelTimelinePlay = cancelTimelinePlay;
 
@@ -1772,22 +2340,7 @@
       var u = (now - playT0) / 1000 / wall;
       var t;
       if (u >= 1) {
-        t = toT;
-        fireMarkersCrossing(playLastT, t, dir);
-        playing = false;
-        editor.playing = false;
-        playRaf = 0;
-        if (pathSeek) {
-          editor.pathHead = null;
-          editor.draw();
-          syncCtrlPlayBtns();
-          mtToTime(toT);
-          return;
-        }
-        editor.playhead = t;
-        syncPlayheadReadout(t);
-        editor.draw();
-        syncCtrlPlayBtns();
+        completePlayClock();
         return;
       }
       t = fromT + span * u;
@@ -1943,12 +2496,13 @@
     if (!(hz > 0)) hz = (editor && editor.playHz) || 50;
     var sliceUs = opts.sliceUs != null ? Number(opts.sliceUs) : Math.round(1e6 / hz);
     if (!(sliceUs > 0)) sliceUs = Math.round(1e6 / hz);
-    send({ path: { cmd: "begin", slice_us: sliceUs } });
+    var mcId = opts.mcId || selectedMcId;
+    send({ path: { cmd: "begin", slice_us: sliceUs, mc_id: mcId } });
     var chunk = [];
     var i;
     function flush() {
       if (!chunk.length) return;
-      send({ path: { cmd: "data", samples: chunk } });
+      send({ path: { cmd: "data", samples: chunk, mc_id: mcId } });
       chunk = [];
     }
     for (i = 0; i < samples.length; i++) {
@@ -1956,7 +2510,8 @@
       if (chunk.length >= 40) flush();
     }
     flush();
-    if (opts.go !== false) send({ path: { cmd: "go" } });
+    if (opts.sync) send({ path: { cmd: "go", mc_id: mcId, sync: true } });
+    else if (opts.go !== false) send({ path: { cmd: "go", mc_id: mcId } });
     if (thenClock) thenClock();
   }
 
@@ -1972,7 +2527,7 @@
   }
 
   function startTimelineTimelapse() {
-    if (!mcIdle()) return;
+    if (pathMotionLocked() || !mcIdle()) return;
     if (!editor) {
       if (window.SWUi && typeof SWUi.showUiError === "function") SWUi.showUiError("No timeline");
       return;
@@ -1988,7 +2543,7 @@
     }
     var fps = tlPathFps();
     var samples = sampleDeltas(0, mot, fps);
-    if (!samples || !samples.length) {
+    if ((!samples || !samples.length) && !linkOn()) {
       if (window.SWUi && typeof SWUi.showUiError === "function") SWUi.showUiError("Path too long");
       return;
     }
@@ -2000,22 +2555,35 @@
     if (window.SWUi && typeof SWUi.tlExposure === "function") trigLen = SWUi.tlExposure();
     var msm = !!(window.SWUi && typeof SWUi.tlMsm === "function" && SWUi.tlMsm());
     function go() {
-      sendPath(samples, null, { hz: fps, go: false });
-      if (msm) {
-        send({ task: "TSK_TL_PATH_MSM " + fmtTlArg(trigTime) + " " + fmtTlArg(trigLen) });
+      var taskLine = msm
+        ? ("TSK_TL_PATH_MSM " + fmtTlArg(trigTime) + " " + fmtTlArg(trigLen))
+        : ("TSK_TL_PATH_CONT " + fmtTlArg(factor) + " " + fmtTlArg(trigTime) + " " + fmtTlArg(trigLen));
+      var msg = { task: taskLine };
+      if (linkOn()) {
+        if (!fanPath(0, mot, { hz: fps, release: false })) return;
+        msg.mc_ids = linkedIds();
       } else {
-        send({
-          task:
-            "TSK_TL_PATH_CONT " +
-            fmtTlArg(factor) +
-            " " +
-            fmtTlArg(trigTime) +
-            " " +
-            fmtTlArg(trigLen)
-        });
+        sendPath(samples, null, { hz: fps, go: false });
       }
+      send(msg);
     }
     var endpoint = editor.poseAt(0);
+    if (linkOn()) {
+      var off = false;
+      linkedIds().forEach(function (id) {
+        withSlotLanes(id, function () {
+          if (poseOffEndpoint(editor.poseAt(0))) off = true;
+        });
+      });
+      if (!off) { go(); return; }
+      cancelTimelinePlay();
+      fanSeekTime(0);
+      editor.playhead = 0;
+      editor.draw();
+      syncPlayheadReadout(0);
+      beginPreroll(endpoint, go);
+      return;
+    }
     if (!poseOffEndpoint(endpoint)) {
       go();
       return;
@@ -2025,18 +2593,12 @@
     editor.playhead = 0;
     editor.draw();
     syncPlayheadReadout(0);
-    preroll = { seeking: true, then: go };
-    if (!mcBusy()) {
-      preroll.seeking = false;
-      preroll.timer = setTimeout(function () {
-        var fn = preroll && preroll.then;
-        preroll = null;
-        if (fn) fn();
-      }, 1000);
-    }
+    beginPreroll(endpoint, go);
   }
 
-  function playGraph(mode) {
+  function playGraph(mode, opts) {
+    opts = opts || {};
+    if (pathMotionLocked()) return;
     if (!mcIdle()) return;
     if (!editor || editor.hasLimitViolation()) return;
     var dur = editor.playDuration();
@@ -2048,37 +2610,70 @@
       toT = 0;
       dir = -1;
       samples = sampleDeltas(fromT, toT);
-      if (!samples) return;
+      if (!samples && !linkOn()) return;
     } else if (mode === "fromRev") {
       fromT = editor.playhead;
       toT = 0;
       dir = -1;
       if (fromT <= 1e-6) return;
       samples = sampleDeltas(fromT, toT);
-      if (!samples) return;
+      if (!samples && !linkOn()) return;
     } else if (mode === "from") {
       fromT = editor.playhead;
       toT = dur;
       dir = 1;
       if (fromT >= mot - 1e-6) return;
       samples = sampleDeltas(fromT, mot);
-      if (!samples) return;
+      if (!samples && !linkOn()) return;
     } else {
       fromT = 0;
       toT = dur;
       dir = 1;
       samples = sampleDeltas(0, mot);
-      if (!samples) return;
+      if (!samples && !linkOn()) return;
     }
+    var slow = !!opts.slow;
+    var sampleTo = (mode === "fwd" || mode === "from") ? mot : toT;
     function go() {
       editor.playhead = fromT;
-      sendPath(samples, function () {
-        var hz = (editor && editor.playHz) || 50;
-        startPlayClock(fromT, toT, dir, samples.length / hz);
-      });
-      motorsOnTimeline = true;
+      editor.draw();
+      syncPlayheadReadout(fromT);
+      if (linkOn()) {
+        var scale = slow ? 5 : 1;
+        var sliceUs = Math.round(1e6 / pathHz()) * scale;
+        var got = fanPath(fromT, sampleTo, { sliceUs: sliceUs });
+        if (!got) return;
+        pathArm = {
+          fromT: fromT,
+          toT: toT,
+          dir: dir,
+          wallSec: (got.length / pathHz()) * scale,
+          started: false
+        };
+        motorsOnTimeline = true;
+        syncPathLock();
+        return;
+      }
+      armPath(samples, fromT, toT, dir, { slow: slow });
     }
     var endpoint = editor.poseAt(mode === "rev" ? mot : fromT);
+    var seekT = mode === "rev" ? mot : fromT;
+    if (linkOn()) {
+      var off = false;
+      linkedIds().forEach(function (id) {
+        withSlotLanes(id, function () {
+          if (poseOffEndpoint(editor.poseAt(seekT))) off = true;
+        });
+      });
+      if (!off) { go(); return; }
+      cancelTimelinePlay();
+      fanSeekTime(seekT);
+      editor.playhead = fromT;
+      editor.draw();
+      syncPlayheadReadout(fromT);
+      beginPreroll(endpoint, go);
+      return;
+    }
     if (!poseOffEndpoint(endpoint)) {
       go();
       return;
@@ -2088,15 +2683,7 @@
     editor.playhead = fromT;
     editor.draw();
     syncPlayheadReadout(fromT);
-    preroll = { seeking: true, then: go };
-    if (!mcBusy()) {
-      preroll.seeking = false;
-      preroll.timer = setTimeout(function () {
-        var fn = preroll && preroll.then;
-        preroll = null;
-        if (fn) fn();
-      }, 1000);
-    }
+    beginPreroll(endpoint, go);
   }
 
   function currentPos(id) {
@@ -2152,7 +2739,8 @@
     if (name === "STOP") {
       cancelTimelinePlay();
       cancelAbcLoop();
-      sendMc("MS");
+      if (linkOn()) send({ mc: "MS", all: true });
+      else sendMc("MS");
       return;
     }
     if (name === "HOME") { motorsOnTimeline = false; sendMc("MH"); return; }
@@ -3856,7 +4444,8 @@
     });
   }
 
-  function kbSetPlayhead(t, seek) {
+  function kbSetPlayhead(t, seek, slow) {
+    if (pathMotionLocked()) return;
     if (!editor) return;
     t = editor.clampT(t);
     var oldT = editor.playhead;
@@ -3867,10 +4456,11 @@
       syncCtrlReadouts();
       return;
     }
-    seekPlayheadMotors(oldT, t, { ctrl: true });
+    seekPlayheadMotors(oldT, t, { ctrl: true, slow: !!slow });
   }
 
   function kbNudgePlayhead(dir, ev) {
+    if (pathMotionLocked()) return;
     if (!editor) return;
     var t;
     if (ev.altKey) {
@@ -3881,18 +4471,20 @@
     } else {
       t = editor.playhead + dir * (ev.shiftKey ? 1 : 0.1);
     }
-    kbSetPlayhead(t, !!ev.ctrlKey);
+    kbSetPlayhead(t, !!ev.ctrlKey, !!(ev.ctrlKey && ev.altKey));
   }
 
   function kbStepSeconds(dir, ev) {
+    if (pathMotionLocked()) return;
     if (!editor) return;
     var dt = ev.shiftKey ? 10 : 1;
-    kbSetPlayhead(editor.playhead + dir * dt, !!ev.ctrlKey);
+    kbSetPlayhead(editor.playhead + dir * dt, !!ev.ctrlKey, !!(ev.ctrlKey && ev.altKey));
   }
 
-  function kbJumpPlayhead(toEnd, seek) {
+  function kbJumpPlayhead(toEnd, seek, slow) {
+    if (pathMotionLocked()) return;
     if (!editor) return;
-    kbSetPlayhead(toEnd ? editor.motionDuration() : 0, seek);
+    kbSetPlayhead(toEnd ? editor.motionDuration() : 0, seek, slow);
   }
 
   function kbSkipPathRepeat(ev) {
@@ -3907,8 +4499,8 @@
       else abcMove(k, !!ev.shiftKey);
       return true;
     }
-    if (k === "p") { if (mcIdle()) playGraph("fwd"); return true; }
-    if (k === "r") { if (mcIdle()) playGraph("rev"); return true; }
+    if (k === "p") { playGraph("fwd", { slow: !!ev.altKey }); return true; }
+    if (k === "r") { playGraph("rev", { slow: !!ev.altKey }); return true; }
     if (k === "e") { kbToggleEnable(); return true; }
     if (k === "k") {
       if (editor) editor.keyAtPlayhead(editor.live);
@@ -3976,8 +4568,16 @@
     if (code === "Home" || code === "End") {
       ev.preventDefault();
       if (kbSkipPathRepeat(ev)) return;
-      kbJumpPlayhead(code === "End", !!ev.ctrlKey);
+      kbJumpPlayhead(code === "End", !!ev.ctrlKey, !!(ev.ctrlKey && ev.altKey));
       return;
+    }
+    if (code.indexOf("Digit") === 0 && ev.ctrlKey && !ev.altKey && !ev.shiftKey && !ev.metaKey) {
+      var mcN = Number(code.slice(5));
+      if (mcN >= 1 && mcN <= 8) {
+        ev.preventDefault();
+        if (mcOrder[mcN - 1] != null) selectMc(mcOrder[mcN - 1]);
+        return;
+      }
     }
     if (code.indexOf("Digit") === 0 && !ev.ctrlKey && !ev.altKey && !ev.metaKey) {
       var n = Number(code.slice(5));
@@ -4049,11 +4649,42 @@
     });
   }
 
+  function mcBundle() {
+    stashSelected();
+    var slots = [];
+    mcOrder.forEach(function (id) {
+      var s = mcSlots[id];
+      if (!s) return;
+      slots.push({
+        id: id,
+        port: s.port || "",
+        name: s.name || "",
+        lanes: s.lanes,
+        marks: s.marks,
+        visible: s.visible,
+        locked: s.locked,
+        session: s.session
+      });
+    });
+    var sel = mcSlots[selectedMcId];
+    return {
+      link: linkOn(),
+      selected_port: sel ? sel.port : "",
+      slots: slots
+    };
+  }
+
   function saveTimeline() {
     if (!editor) return;
-    project.lanes = editor.lanes;
+    stashSelected();
+    var sel = selectedMcId ? mcSlots[selectedMcId] : null;
+    project.lanes = (sel && sel.lanes) || editor.lanes;
     project.markers = editor.markers;
     project.play_hz = editor.playHz;
+    project.link = linkOn();
+    project.file_name = projectFileName || project.file_name || "";
+    project.mc_bundle = mcBundle();
+    savedMcBundle = project.mc_bundle;
     SHProject.saveProject(project);
     if (smWinOpen()) smRefreshCells();
   }
@@ -4374,6 +5005,248 @@
     alert("Refused: the path would not fit in max " + Math.floor(editor.maxT) + " s.");
   }
 
+  function projectPayload() {
+    saveTimeline();
+    var bundle = project.mc_bundle || mcBundle();
+    return {
+      version: 1,
+      name: projectFileName || (project && project.name) || "untitled",
+      link: linkOn(),
+      frame_rate: project.frame_rate,
+      mark_count: project.mark_count,
+      markers: editor ? editor.markers : [],
+      play_hz: editor ? editor.playHz : 50,
+      playhead: editor ? editor.playhead : 0,
+      timelapse: {
+        factor: window.SWUi && SWUi.tlFactor ? SWUi.tlFactor() : 10,
+        exposure: window.SWUi && SWUi.tlExposure ? SWUi.tlExposure() : 0.1,
+        msm: window.SWUi && SWUi.tlMsm ? !!SWUi.tlMsm() : false
+      },
+      stop_motion: {
+        image: localStorage.getItem("sm_image") || "",
+        auto: localStorage.getItem("sm_auto") === "1"
+      },
+      mcs: (bundle && bundle.slots) || []
+    };
+  }
+
+  function selectedMcPayload() {
+    stashSelected();
+    var s = mcSlots[selectedMcId];
+    return {
+      version: 1,
+      name: s && s.name ? s.name : mcButtonLabel(selectedMcId || 1),
+      lanes: s ? s.lanes : null,
+      marks: s ? s.marks : null,
+      visible: s ? s.visible : null,
+      locked: s ? s.locked : null,
+      session: s ? s.session : null
+    };
+  }
+
+  function putJson(url, name, data) {
+    return fetch(url, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: name, data: data })
+    }).then(function (r) {
+      if (!r.ok) throw new Error("save failed");
+      return r.json();
+    });
+  }
+
+  function listJson(url) {
+    return fetch(url).then(function (r) {
+      if (!r.ok) throw new Error("list failed");
+      return r.json();
+    });
+  }
+
+  function openNameDlg(title, seed) {
+    return new Promise(function (resolve) {
+      var dlg = $("fileDlg");
+      if (!dlg || !dlg.showModal) { resolve(window.prompt(title, seed || "") || ""); return; }
+      $("fileDlgTitle").textContent = title;
+      $("fileDlgList").innerHTML = "";
+      $("fileDlgNameWrap").classList.remove("hidden");
+      $("fileDlgName").value = seed || "";
+      $("fileDlgErr").textContent = "";
+      function done(val) {
+        dlg.close();
+        $("fileDlgOk").onclick = null;
+        $("fileDlgCancel").onclick = null;
+        resolve(val);
+      }
+      $("fileDlgOk").onclick = function () {
+        var name = String($("fileDlgName").value || "").trim();
+        if (!name) { $("fileDlgErr").textContent = "Enter a name."; return; }
+        done(name);
+      };
+      $("fileDlgCancel").onclick = function () { done(""); };
+      if (!dlg.open) dlg.showModal();
+    });
+  }
+
+  function openPickDlg(title, files) {
+    return new Promise(function (resolve) {
+      var dlg = $("fileDlg");
+      if (!dlg || !dlg.showModal) { resolve(""); return; }
+      $("fileDlgTitle").textContent = title;
+      $("fileDlgNameWrap").classList.add("hidden");
+      $("fileDlgErr").textContent = "";
+      var list = $("fileDlgList");
+      list.innerHTML = "";
+      var picked = "";
+      (files || []).forEach(function (name) {
+        var btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "btn ghost sm";
+        btn.textContent = name;
+        btn.onclick = function () {
+          picked = name;
+          Array.prototype.forEach.call(list.children, function (el) {
+            el.setAttribute("aria-pressed", el === btn ? "true" : "false");
+          });
+        };
+        list.appendChild(btn);
+      });
+      function done(val) {
+        dlg.close();
+        $("fileDlgOk").onclick = null;
+        $("fileDlgCancel").onclick = null;
+        resolve(val);
+      }
+      $("fileDlgOk").onclick = function () {
+        if (!picked) { $("fileDlgErr").textContent = "Pick a file."; return; }
+        done(picked);
+      };
+      $("fileDlgCancel").onclick = function () { done(""); };
+      if (!dlg.open) dlg.showModal();
+    });
+  }
+
+  function saveProjectFile(asNew) {
+    var seed = projectFileName || (project && project.name) || "untitled";
+    var step = asNew || !projectFileName ? openNameDlg("Save project", seed) : Promise.resolve(projectFileName);
+    step.then(function (name) {
+      if (!name) return;
+      projectFileName = String(name).replace(/\.json$/i, "");
+      return putJson("/api/projects", projectFileName, projectPayload());
+    }).catch(function (err) {
+      alert((err && err.message) || "Save failed");
+    });
+  }
+
+  function saveMcFile() {
+    if (!selectedMcId) { alert("No MC selected."); return; }
+    var seed = mcButtonLabel(selectedMcId);
+    openNameDlg("Save selected MC", seed).then(function (name) {
+      if (!name) return;
+      return putJson("/api/mc-files", String(name).replace(/\.json$/i, ""), selectedMcPayload());
+    }).catch(function (err) {
+      alert((err && err.message) || "Save failed");
+    });
+  }
+
+  function applyLoadedProject(data) {
+    if (!data || !Array.isArray(data.mcs)) {
+      alert("Not a SliderMoCo project.");
+      return Promise.resolve();
+    }
+    if (data.frame_rate) project.frame_rate = data.frame_rate;
+    if (data.mark_count) project.mark_count = data.mark_count;
+    if (data.play_hz && editor) editor.setPlayHz(data.play_hz);
+    if (editor && Array.isArray(data.markers)) editor.setMarkers(data.markers);
+    if (editor && data.playhead != null) {
+      editor.playhead = Number(data.playhead) || 0;
+      editor.draw();
+      syncPlayheadReadout(editor.playhead);
+    }
+    if ($("mcLink")) $("mcLink").checked = !!data.link;
+    if (window.SWUi && typeof SWUi.setTimelapse === "function" && data.timelapse) {
+      SWUi.setTimelapse(data.timelapse);
+    }
+    if (data.stop_motion) {
+      try {
+        if (data.stop_motion.image != null) localStorage.setItem(SM_LS_IMAGE, String(data.stop_motion.image));
+        localStorage.setItem(SM_LS_AUTO, data.stop_motion.auto ? "1" : "0");
+      } catch (e) {}
+      var smImg = document.querySelector(".js-sm-image");
+      var smAuto = document.querySelector(".js-sm-auto");
+      if (smImg && data.stop_motion.image != null) smImg.value = String(data.stop_motion.image);
+      if (smAuto) smAuto.checked = !!data.stop_motion.auto;
+    }
+    savedMcBundle = {
+      link: !!data.link,
+      selected_port: (data.mcs[0] && data.mcs[0].port) || "",
+      slots: data.mcs
+    };
+    data.mcs.forEach(function (block) {
+      mcOrder.forEach(function (id) {
+        var s = mcSlots[id];
+        if (!s || !block || !block.port || s.port !== block.port) return;
+        s.lanes = block.lanes;
+        s.marks = block.marks;
+        s.visible = block.visible;
+        s.locked = block.locked;
+        s.session = block.session;
+      });
+    });
+    if (selectedMcId) loadSlotLanes(selectedMcId);
+    var have = {};
+    mcOrder.forEach(function (id) {
+      if (mcSlots[id] && mcSlots[id].port) have[mcSlots[id].port] = true;
+    });
+    var chain = Promise.resolve();
+    data.mcs.forEach(function (block) {
+      if (!block || !block.port || have[block.port]) return;
+      have[block.port] = true;
+      chain = chain.then(function () {
+        serialMode = "add";
+        serialEditId = null;
+        return serialPost(block.port);
+      });
+    });
+    return chain.then(function () { saveTimeline(); });
+  }
+
+  function applyLoadedMc(data) {
+    var s = mcSlots[selectedMcId];
+    if (!s || !data || !data.lanes) {
+      alert("Not an MC file.");
+      return;
+    }
+    s.lanes = data.lanes;
+    s.marks = data.marks || null;
+    s.visible = data.visible || null;
+    s.locked = data.locked || null;
+    if (data.session) s.session = data.session;
+    loadSlotLanes(selectedMcId);
+    saveTimeline();
+  }
+
+  function openProjectFile(kind) {
+    var url = kind === "load-mc" ? "/api/mc-files" : "/api/projects";
+    listJson(url).then(function (info) {
+      var files = (info && info.files) || [];
+      return openPickDlg(kind === "load-mc" ? "Load selected" : "Load", files);
+    }).then(function (name) {
+      if (!name) return null;
+      return fetch(url + "?name=" + encodeURIComponent(name)).then(function (r) {
+        if (!r.ok) throw new Error("not found");
+        return r.json();
+      }).then(function (data) {
+        if (kind === "load-mc") applyLoadedMc(data);
+        else {
+          projectFileName = String(name).replace(/\.json$/i, "");
+          return applyLoadedProject(data);
+        }
+      });
+    }).catch(function (err) {
+      alert((err && err.message) || "Load failed");
+    });
+  }
+
   function bindTimelineMenu() {
     function pick(fn) {
       return function () {
@@ -4387,6 +5260,11 @@
         el.onclick = pick(fn);
       });
     }
+    bindAll(".js-proj-load", function () { openProjectFile("load"); });
+    bindAll(".js-proj-save", function () { saveProjectFile(false); });
+    bindAll(".js-proj-save-as", function () { saveProjectFile(true); });
+    bindAll(".js-mc-load", function () { openProjectFile("load-mc"); });
+    bindAll(".js-mc-save-as", function () { saveMcFile(); });
     bindAll(".js-tl-csv", function () {
       SHProject.downloadText(projName() + "_timeline.csv", timelineCsv(), "text/csv;charset=utf-8");
     });
@@ -4608,6 +5486,14 @@
     editor.setPlayHz(project.play_hz || 50);
     editor.setPathBuffer(pathBufferSize);
     editor.setLanes(project.lanes);
+    if ($("mcLink")) {
+      $("mcLink").checked = !!(project && project.link);
+      $("mcLink").onchange = function () { saveTimeline(); };
+    }
+    if (selectedMcId && mcSlots[selectedMcId]) {
+      if (!mcSlots[selectedMcId].lanes) mcSlots[selectedMcId].lanes = editor.lanes;
+      else loadSlotLanes(selectedMcId);
+    }
     editor.fit();
     pushEditorLimits();
     Array.prototype.forEach.call(document.querySelectorAll("[data-interp]"), function (b) {
@@ -4621,12 +5507,13 @@
     }
     if ($("tlFit")) $("tlFit").onclick = function () { editor.fitY(); };
     if ($("tlFitX")) $("tlFitX").onclick = function () { editor.fitX(); };
-    function jumpVisibleKey(dir, seek) {
+    function jumpVisibleKey(dir, seek, slow) {
+      if (pathMotionLocked()) return;
       var oldT = editor.playhead;
       if (!editor.jumpVisibleKey(dir)) return;
       var t = editor.playhead;
       syncPlayheadReadout(t);
-      if (seek) seekPlayheadMotors(oldT, t);
+      if (seek) seekPlayheadMotors(oldT, t, { slow: !!slow });
     }
     function bindJumpKey(el, dir) {
       if (!el) return;
@@ -4636,7 +5523,7 @@
       });
       el.addEventListener("contextmenu", function (ev) {
         ev.preventDefault();
-        jumpVisibleKey(dir, true);
+        jumpVisibleKey(dir, true, ev.altKey);
       });
     }
     bindJumpKey($("tlPrevKey"), -1);
@@ -4648,9 +5535,9 @@
         openMarkerDlg(editor.addMarkerAtPlayhead());
       };
     }
-    if ($("tlPlay")) $("tlPlay").onclick = function () { if (mcIdle()) playGraph("fwd"); };
-    if ($("tlPlayRev")) $("tlPlayRev").onclick = function () { if (mcIdle()) playGraph("rev"); };
-    if ($("tlPlayFrom")) $("tlPlayFrom").onclick = function () { if (mcIdle()) playGraph("from"); };
+    if ($("tlPlay")) $("tlPlay").onclick = function (ev) { playGraph("fwd", { slow: !!ev.altKey }); };
+    if ($("tlPlayRev")) $("tlPlayRev").onclick = function (ev) { playGraph("rev", { slow: !!ev.altKey }); };
+    if ($("tlPlayFrom")) $("tlPlayFrom").onclick = function (ev) { playGraph("from", { slow: !!ev.altKey }); };
     if ($("tlToStart")) {
       $("tlToStart").onclick = function () {
         editor.playhead = 0;
@@ -5309,7 +6196,8 @@
   function mcCfgLoad(keepTab) {
     var gen = ++mcCfgGen;
     mcCfgStatus("Reading…", false);
-    return fetch("/api/mc_config").then(function (r) { return r.json(); }).then(function (o) {
+    var q = selectedMcId ? ("?mc_id=" + encodeURIComponent(selectedMcId)) : "";
+    return fetch("/api/mc_config" + q).then(function (r) { return r.json(); }).then(function (o) {
       if (gen !== mcCfgGen) return;
       o = o || {};
       mcCfgState.items = o.items || {};
@@ -5350,7 +6238,7 @@
     fetch("/api/mc_config", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ items: dirty })
+      body: JSON.stringify({ items: dirty, mc_id: selectedMcId })
     }).then(function (r) { return r.json(); }).then(function (res) {
       mcCfgSetBusy(false);
       res = res || {};

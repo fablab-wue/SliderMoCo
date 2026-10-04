@@ -1,6 +1,6 @@
 # CLI and raw MC lines
 
-The phone **CLI** tab sends raw SliderMC ASCII through the same bridge as the buttons: `{"mc":"<line>"}`.
+The phone **CLI** tab sends raw SliderMC ASCII through the same bridge as the buttons: `{"mc":"<line>"}`. There is no `mc_id`, so the line hits **slot 1**.
 
 There is no CLI on the desktop layout. Use a serial terminal on the MC, or narrow the window.
 

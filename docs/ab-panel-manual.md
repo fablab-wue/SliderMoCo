@@ -8,6 +8,8 @@ On a phone this is the **AB** tab — same controls, no Timeline.
 
 This is not Timelapse (no shutter task) and not Timeline keys.
 
+Marks belong to the **selected** controller. Switching MC restores that controller’s A–H poses. **Link** does not send A/B to the other controllers.
+
 ---
 
 ## Layout
@@ -42,7 +44,7 @@ The mark bar ▶ / ▶▶ buttons do the same moves as the block buttons.
 
 Hold **⚑** 3 s to forget that letter.
 
-Poses persist in the browser as `sw_marks`. They are **not** inside the project JSON (that file only stores how many letters to show).
+Poses belong to the selected controller. The browser keeps the open slot in `sw_marks`. A host project and a selected-MC file store each controller’s poses. Config’s mark **count** only decides how many letters are shown.
 
 Marks are poses, not soft limits. LIMIT ⍇ / ⍈ are a different store (`SL` / `SR`).
 
