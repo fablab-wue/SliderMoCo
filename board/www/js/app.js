@@ -4765,8 +4765,8 @@
     debug_level: "Debug",
     path_buffer_size: "Path buffer",
     init_path_slice_us: "Path slice (µs)",
-    ramp_start_hz: "Ramp start (Hz)",
-    stop_approach_hz: "Stop approach (Hz)",
+    ramp_start_speed: "Ramp start",
+    stop_approach_speed: "Stop approach",
     dir_change_pause_s: "Dir pause (s)",
     BUZZER_use: "Buzzer",
     WDT_use: "Watchdog"
@@ -4775,7 +4775,7 @@
     "name", "motors", "servos", "axis", "unit_name",
     "init_speed", "init_accel", "init_verbose", "verbose_rate_hz",
     "init_terminal", "init_debug_level", "path_buffer_size", "init_path_slice_us",
-    "ramp_start_hz", "stop_approach_hz", "dir_change_pause_s",
+    "ramp_start_speed", "stop_approach_speed", "dir_change_pause_s",
     "BUZZER_use", "WDT_use"
   ];
   var MC_CFG_MOTOR_ORDER = [
